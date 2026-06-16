@@ -2,7 +2,7 @@
 
 # ✨ Light Chat
 
-**轻量级 AI 聊天平台 | 开箱即用的多用户管理系统**
+**轻量级 AI 聊天平台 | 开箱即用的多用户管理系统 | [个人版](https://github.com/DsureD/Lite-Chat)**
 
 [![Next.js](https://img.shields.io/badge/Next.js-15.0-black?logo=next.js)](https://nextjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.6-blue?logo=typescript)](https://www.typescriptlang.org/)
