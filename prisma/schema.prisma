@@ -1,0 +1,185 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                         String                @id @default(cuid())
+  username                   String                @unique
+  passwordHash               String
+  role                       String                @default("USER")
+  credits                    Int                   @default(0)
+  status                     String                @default("active")
+  maxConversations           Int?
+  maxMessagesPerConversation Int?
+  deletedAt                  DateTime?
+  createdAt                  DateTime              @default(now())
+  updatedAt                  DateTime              @updatedAt
+  conversations              Conversation[]
+  creditLogs                 CreditLog[]
+  redeemLogs                 RedeemLog[]
+  userModelPermissions       UserModelPermission[]
+  adminLogs                  AdminLog[]
+  agents                     Agent[]
+
+  @@index([status])
+  @@index([deletedAt])
+}
+
+model Provider {
+  id              String   @id @default(cuid())
+  name            String
+  baseUrl         String
+  apiKeyEncrypted String
+  enabled         Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  models          Model[]
+
+  @@unique([name])
+}
+
+model Model {
+  id                   String                @id @default(cuid())
+  providerId           String
+  provider             Provider              @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  name                 String
+  type                 String                @default("chat")
+  capabilities         String                @default("chat")
+  enabled              Boolean               @default(true)
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+  userModelPermissions UserModelPermission[]
+
+  @@unique([providerId, name])
+  @@index([providerId])
+}
+
+model Conversation {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title      String    @default("新会话")
+  providerId String?
+  modelId    String?
+  modelName  String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  messages   Message[]
+
+  // 复合索引：会话列表查询 where userId orderBy updatedAt desc 一索引命中
+  @@index([userId, updatedAt])
+  @@index([updatedAt])
+}
+
+model Message {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           String
+  content        String
+  modelName      String?
+  imageUrl       String?
+  imageBase64    String?
+  metadata       String?
+  createdAt      DateTime     @default(now())
+
+  // 复合索引：上下文查询 where conversationId orderBy createdAt desc 一索引命中
+  @@index([conversationId, createdAt])
+}
+
+model RedeemCode {
+  id          String      @id @default(cuid())
+  code        String      @unique
+  credits     Int
+  maxUses     Int         @default(1)
+  usedCount   Int         @default(0)
+  expiresAt   DateTime?
+  status      String      @default("active")
+  createdBy   String
+  description String?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  redeemLogs  RedeemLog[]
+
+  // code 已有 @unique 隐式唯一索引，无需重复建索引
+  @@index([status])
+  @@index([createdAt])
+}
+
+model RedeemLog {
+  id           String     @id @default(cuid())
+  userId       String
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  redeemCodeId String
+  redeemCode   RedeemCode @relation(fields: [redeemCodeId], references: [id], onDelete: Cascade)
+  credits      Int
+  redeemedAt   DateTime   @default(now())
+
+  @@index([userId])
+  @@index([redeemCodeId])
+  @@index([redeemedAt])
+}
+
+model CreditLog {
+  id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  amount         Int
+  type           String
+  conversationId String?
+  modelName      String?
+  description    String?
+  createdAt      DateTime @default(now())
+
+  // 复合索引：日志表只增不删，按用户/类型 + 时间的组合查询最常见
+  @@index([userId, createdAt])
+  @@index([type, createdAt])
+  @@index([createdAt])
+}
+
+model UserModelPermission {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  modelId   String
+  model     Model    @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, modelId])
+  @@index([userId])
+  @@index([modelId])
+}
+
+model AdminLog {
+  id         String   @id @default(cuid())
+  adminId    String
+  admin      User     @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  action     String
+  targetType String?
+  targetId   String?
+  details    String?
+  createdAt  DateTime @default(now())
+
+  @@index([adminId])
+  @@index([createdAt])
+  @@index([action])
+}
+
+model Agent {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  prompt    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
