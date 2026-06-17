@@ -1,6 +1,7 @@
 import { requireAdmin } from "@/lib/auth";
 import { encryptText } from "@/lib/crypto";
 import { jsonError, jsonOk, normalizeBaseUrl, routeError } from "@/lib/http";
+import { normalizeProviderApiKey } from "@/lib/openai";
 import { prisma } from "@/lib/prisma";
 
 type RouteContext = {
@@ -36,7 +37,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     }
 
     if (typeof body.apiKey === "string" && body.apiKey.trim()) {
-      data.apiKeyEncrypted = encryptText(body.apiKey.trim());
+      data.apiKeyEncrypted = encryptText(normalizeProviderApiKey(body.apiKey));
     }
 
     if (typeof body.enabled === "boolean") {

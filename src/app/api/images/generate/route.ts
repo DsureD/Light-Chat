@@ -304,7 +304,13 @@ export async function POST(request: Request) {
       } catch (error) {
         // 客户端主动断开导致的中止不算错误，静默结束即可
         if (!upstreamAbort.signal.aborted) {
-          send("error", { message: error instanceof Error ? error.message : "图片生成异常。" });
+          const message =
+            error instanceof TypeError
+              ? "图片生成失败：无法连接服务商，请检查 Base URL 是否正确，或服务商网络是否可达。"
+              : error instanceof Error
+                ? error.message
+                : "图片生成异常。";
+          send("error", { message });
         }
       } finally {
         clearInterval(heartbeat);

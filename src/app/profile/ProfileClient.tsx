@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Button, Card, Input, SecondaryButton } from "@/components/ui";
+import { PasswordInput } from "@/components/PasswordInput";
 import { ArrowLeft, Gift, History, Key } from "@/components/icons";
 
 type CreditLog = {
@@ -236,31 +237,31 @@ export function ProfileClient() {
           <form onSubmit={handleChangePassword} className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">当前密码</label>
-              <Input
-                type="password"
+              <PasswordInput
                 value={oldPassword}
                 onChange={(e) => setOldPassword(e.target.value)}
                 placeholder="请输入当前密码"
+                visibilityLabel="当前密码"
                 disabled={passwordLoading}
               />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">新密码</label>
-              <Input
-                type="password"
+              <PasswordInput
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
                 placeholder="至少 8 位字符"
+                visibilityLabel="新密码"
                 disabled={passwordLoading}
               />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">确认新密码</label>
-              <Input
-                type="password"
+              <PasswordInput
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 placeholder="再次输入新密码"
+                visibilityLabel="确认新密码"
                 disabled={passwordLoading}
               />
             </div>

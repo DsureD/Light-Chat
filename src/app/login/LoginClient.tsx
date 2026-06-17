@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState, useEffect, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { Button, Card, Input } from "@/components/ui";
+import { PasswordInput } from "@/components/PasswordInput";
 
 async function readError(response: Response) {
   try {
@@ -87,7 +88,7 @@ export function LoginClient() {
           </label>
           <label className="block space-y-2 text-sm font-medium">
             <span>密码</span>
-            <Input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" disabled={loading} />
+            <PasswordInput value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" disabled={loading} />
           </label>
           {error ? <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p> : null}
           <Button className="w-full" disabled={loading || !username.trim() || !password.trim()} type="submit">

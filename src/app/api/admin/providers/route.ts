@@ -1,6 +1,7 @@
 import { requireAdmin } from "@/lib/auth";
 import { encryptText } from "@/lib/crypto";
 import { jsonError, jsonOk, normalizeBaseUrl, routeError } from "@/lib/http";
+import { normalizeProviderApiKey } from "@/lib/openai";
 import { prisma } from "@/lib/prisma";
 
 export async function GET() {
@@ -43,11 +44,13 @@ export async function POST(request: Request) {
     const body = await request.json();
     const name = String(body.name || "").trim();
     const baseUrl = normalizeBaseUrl(String(body.baseUrl || ""));
-    const apiKey = String(body.apiKey || "").trim();
+    const apiKeyInput = String(body.apiKey || "");
 
-    if (!name || !baseUrl || !apiKey) {
+    if (!name || !baseUrl || !apiKeyInput.trim()) {
       return jsonError("服务商名称、Base URL 和 API Key 都不能为空。", 400);
     }
+
+    const apiKey = normalizeProviderApiKey(apiKeyInput);
 
     const provider = await prisma.provider.create({
       data: {

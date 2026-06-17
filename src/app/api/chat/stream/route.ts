@@ -424,7 +424,13 @@ export async function POST(request: Request) {
       } catch (error) {
         // 客户端主动断开导致的中止不算错误，静默结束即可
         if (!upstreamAbort.signal.aborted) {
-          send("error", { message: error instanceof Error ? error.message : "模型调用异常。" });
+          const message =
+            error instanceof TypeError
+              ? "模型调用失败：无法连接服务商，请检查 Base URL 是否正确，或服务商网络是否可达。"
+              : error instanceof Error
+                ? error.message
+                : "模型调用异常。";
+          send("error", { message });
         }
       } finally {
         try {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, FormEvent } from "react";
-import { Button, Card, Input, SecondaryButton } from "@/components/ui";
+import { AdminStatusToast, Button, Card, Input, SecondaryButton } from "@/components/ui";
 import { Settings } from "@/components/icons";
 
 type SystemSettings = {
@@ -129,7 +129,7 @@ export function SettingsClient() {
       }
 
       const result = await response.json();
-      setNotice(result.message || "设置已保存。");
+      setNotice(`${result.message || "设置已保存。"} 需要重启应用后生效。`);
       await loadSettings();
     } catch (err) {
       setError(err instanceof Error ? err.message : "保存设置失败。");
@@ -148,6 +148,16 @@ export function SettingsClient() {
 
   return (
     <div className="space-y-6">
+      <AdminStatusToast
+        loading={loading ? "正在保存设置..." : ""}
+        notice={notice}
+        error={error}
+        onDismiss={() => {
+          setNotice("");
+          setError("");
+        }}
+      />
+
       <Card className="p-6 dark:bg-card dark:border-line">
         <div className="mb-6">
           <div className="mb-2 inline-flex items-center gap-2 rounded-md bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600 dark:bg-sidebar dark:text-muted">
@@ -156,13 +166,6 @@ export function SettingsClient() {
           <h2 className="text-2xl font-semibold dark:text-ink">系统设置</h2>
           <p className="mt-1 text-sm text-slate-500 dark:text-muted">配置系统的全局行为和限制</p>
         </div>
-
-        {(notice || error) && (
-          <div className="mb-4 grid gap-2">
-            {error && <div className="rounded-md bg-red-50 dark:bg-red-900/20 px-4 py-3 text-sm text-red-600 dark:text-red-400">{error}</div>}
-            {notice && <div className="rounded-md bg-green-50 dark:bg-green-900/20 px-4 py-3 text-sm text-green-600 dark:text-green-400">{notice}</div>}
-          </div>
-        )}
 
         <form onSubmit={handleSave} className="space-y-6">
           {/* 注册控制 */}
@@ -348,11 +351,6 @@ export function SettingsClient() {
             </SecondaryButton>
           </div>
 
-          {notice && (
-            <div className="rounded-md bg-yellow-50 dark:bg-yellow-900/20 px-4 py-3 text-sm text-yellow-700 dark:text-yellow-400">
-              ⚠️ 设置已保存到 .env.local 文件，但需要重启应用才能生效。
-            </div>
-          )}
         </form>
       </Card>
     </div>

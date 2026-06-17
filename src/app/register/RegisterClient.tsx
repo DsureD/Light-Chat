@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useEffect, type FormEvent } from "react";
 import { Button, Card, Input } from "@/components/ui";
+import { PasswordInput } from "@/components/PasswordInput";
 
 async function readError(response: Response) {
   try {
@@ -177,9 +178,8 @@ export function RegisterClient() {
             <label htmlFor="password" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
               密码
             </label>
-            <Input
+            <PasswordInput
               id="password"
-              type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="至少 8 位字符"
@@ -192,12 +192,12 @@ export function RegisterClient() {
             <label htmlFor="confirmPassword" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
               确认密码
             </label>
-            <Input
+            <PasswordInput
               id="confirmPassword"
-              type="password"
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
               placeholder="再次输入密码"
+              visibilityLabel="确认密码"
               disabled={loading}
               required
             />

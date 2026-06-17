@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { Button, Card, Input, SecondaryButton } from "@/components/ui";
+import { AdminStatusToast, Button, Card, Input, SecondaryButton } from "@/components/ui";
 import { useConfirm } from "@/components/ConfirmDialog";
+import { PasswordInput } from "@/components/PasswordInput";
 import { Users, Plus, PencilLine, Trash2, Gift, History } from "@/components/icons";
 
 type User = {
@@ -520,6 +521,16 @@ export function UsersClient() {
 
   return (
     <div className="space-y-6">
+      <AdminStatusToast
+        loading={loading ? "正在处理..." : ""}
+        notice={notice}
+        error={error}
+        onDismiss={() => {
+          setNotice("");
+          setError("");
+        }}
+      />
+
       <Card className="p-6 dark:bg-card dark:border-line">
         <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
@@ -533,13 +544,6 @@ export function UsersClient() {
             <Plus className="h-4 w-4" /> 添加用户
           </Button>
         </div>
-
-        {(notice || error) && (
-          <div className="mb-4 grid gap-2">
-            {notice ? <p className="rounded-md border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-300">{notice}</p> : null}
-            {error ? <p className="rounded-md border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">{error}</p> : null}
-          </div>
-        )}
 
         <div className="mb-4 flex flex-col gap-3 sm:flex-row">
           <Input
@@ -700,8 +704,7 @@ export function UsersClient() {
               </label>
               <label className="block space-y-2 text-sm font-medium dark:text-ink">
                 <span>密码</span>
-                <Input
-                  type="password"
+                <PasswordInput
                   value={createPassword}
                   onChange={(e) => setCreatePassword(e.target.value)}
                   placeholder="至少8位字符"

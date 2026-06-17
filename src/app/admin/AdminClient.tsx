@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
-import { Bot, Database, KeyRound, Layers3, PencilLine, Plus, RefreshCcw, Trash2 } from "@/components/icons";
-import { Button, Card, Input, SecondaryButton } from "@/components/ui";
+import { Bot, ChevronDown, Database, Eye, EyeOff, KeyRound, Layers3, PencilLine, Plus, RefreshCcw, Trash2 } from "@/components/icons";
+import { AdminStatusToast, Button, Card, Input, SecondaryButton } from "@/components/ui";
 import { useConfirm } from "@/components/ConfirmDialog";
 import type { PublicModel, PublicProvider } from "@/lib/types";
 
@@ -44,10 +44,12 @@ export function AdminClient({ username }: { username: string }) {
   const [providerName, setProviderName] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
+  const [showApiKey, setShowApiKey] = useState(false);
   const [manualProviderId, setManualProviderId] = useState("");
   const [manualModelName, setManualModelName] = useState("");
   const [manualModelType, setManualModelType] = useState("chat");
   const [manualCapabilities, setManualCapabilities] = useState("chat");
+  const [collapsedModelProviderIds, setCollapsedModelProviderIds] = useState<Set<string>>(new Set());
   const [loadingMessage, setLoadingMessage] = useState("");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
@@ -82,6 +84,7 @@ export function AdminClient({ username }: { username: string }) {
     setProviderName("");
     setBaseUrl("");
     setApiKey("");
+    setShowApiKey(false);
   }
 
   function startEditProvider(provider: ProviderWithModels) {
@@ -90,6 +93,7 @@ export function AdminClient({ username }: { username: string }) {
     setProviderName(provider.name);
     setBaseUrl(provider.baseUrl);
     setApiKey("");
+    setShowApiKey(false);
     setNotice("");
     setError("");
     window.scrollTo({ top: 0 });
@@ -238,6 +242,18 @@ export function AdminClient({ username }: { username: string }) {
     });
   }
 
+  function toggleModelProvider(providerId: string) {
+    setCollapsedModelProviderIds((currentIds) => {
+      const nextIds = new Set(currentIds);
+      if (nextIds.has(providerId)) {
+        nextIds.delete(providerId);
+      } else {
+        nextIds.add(providerId);
+      }
+      return nextIds;
+    });
+  }
+
   async function deleteModel(modelId: string) {
     const confirmed = await confirm({
       title: "删除模型",
@@ -262,6 +278,16 @@ export function AdminClient({ username }: { username: string }) {
 
   return (
     <>
+      <AdminStatusToast
+        loading={loadingMessage}
+        notice={notice}
+        error={error}
+        onDismiss={() => {
+          setNotice("");
+          setError("");
+        }}
+      />
+
       <Card className="p-6 dark:bg-card dark:border-line">
         <div className="mb-6">
           <h2 className="text-xl font-semibold dark:text-ink">统计概览</h2>
@@ -292,14 +318,6 @@ export function AdminClient({ username }: { username: string }) {
         </div>
       </Card>
 
-        {(notice || error || loadingMessage) && (
-          <div className="grid gap-2">
-            {loadingMessage ? <p className="rounded-md border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-700 dark:border-blue-900/50 dark:bg-blue-950/30 dark:text-blue-300">{loadingMessage}</p> : null}
-            {notice ? <p className="rounded-md border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-700 dark:border-emerald-900/50 dark:bg-emerald-950/30 dark:text-emerald-300">{notice}</p> : null}
-            {error ? <p className="rounded-md border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">{error}</p> : null}
-          </div>
-        )}
-
         <section className="grid gap-6 lg:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)]">
           <Card className="overflow-hidden p-6 dark:bg-card dark:border-line">
             <div className="mb-6 flex items-start justify-between gap-3">
@@ -328,7 +346,24 @@ export function AdminClient({ username }: { username: string }) {
               </label>
               <label className="block space-y-2 text-sm font-medium dark:text-ink">
                 <span>{providerMode === "edit" ? "API Key（留空则不修改）" : "API Key"}</span>
-                <Input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={providerMode === "edit" ? "需要更换时再填写" : "sk-..."} />
+                <div className="relative">
+                  <Input
+                    className="pr-12"
+                    type={showApiKey ? "text" : "password"}
+                    value={apiKey}
+                    onChange={(event) => setApiKey(event.target.value)}
+                    placeholder={providerMode === "edit" ? "需要更换时再填写" : "sk-..."}
+                  />
+                  <button
+                    type="button"
+                    aria-label={showApiKey ? "隐藏 API Key" : "显示 API Key"}
+                    title={showApiKey ? "隐藏 API Key" : "显示 API Key"}
+                    className="absolute right-2 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg text-muted transition hover:bg-ink/[0.06] hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 dark:hover:bg-ink/10"
+                    onClick={() => setShowApiKey((visible) => !visible)}
+                  >
+                    {showApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
               </label>
               <Button className="w-full py-3" disabled={Boolean(loadingMessage)} type="submit">
                 {providerMode === "edit" ? <PencilLine className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
@@ -435,40 +470,57 @@ export function AdminClient({ username }: { username: string }) {
             </div>
             <div className="max-h-[40rem] space-y-5 overflow-auto pr-1">
               {allModels.length === 0 ? <p className="rounded-md border border-dashed border-slate-200 bg-slate-50 p-5 text-sm text-slate-500 dark:border-line dark:bg-sidebar dark:text-muted">暂无模型，请查询导入或手动添加。</p> : null}
-              {providers.map((provider) => (
-                <div key={provider.id} className="rounded-md border border-slate-200 bg-white p-4 dark:border-line dark:bg-sidebar">
-                  <div className="mb-3 flex items-center justify-between gap-3">
-                    <div>
-                      <h3 className="font-semibold dark:text-ink">{provider.name}</h3>
-                      <p className="text-xs text-slate-400 dark:text-muted/70">{provider.models.length} 个模型</p>
-                    </div>
-                    <StatusBadge enabled={provider.enabled} />
-                  </div>
-                  <div className="space-y-2">
-                    {provider.models.length === 0 ? <p className="rounded-md bg-slate-50 p-3 text-sm text-slate-500 dark:bg-card dark:text-muted">该服务商暂无模型。</p> : null}
-                    {provider.models.map((model) => (
-                      <div key={model.id} className="flex flex-col justify-between gap-3 rounded-md bg-slate-50 p-3 dark:bg-card md:flex-row md:items-center">
-                        <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <h4 className="break-all text-sm font-semibold dark:text-ink">{model.name}</h4>
-                            <TypeBadge type={model.type} />
-                            <StatusBadge enabled={model.enabled} />
-                          </div>
-                          <p className="mt-1 text-xs text-slate-500 dark:text-muted">能力：{model.capabilities}</p>
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                          <SecondaryButton className="px-3 py-1.5" disabled={Boolean(loadingMessage)} onClick={() => toggleModel(model)}>
-                            {model.enabled ? "停用" : "启用"}
-                          </SecondaryButton>
-                          <SecondaryButton className="px-3 py-1.5 text-red-600 dark:text-red-400" disabled={Boolean(loadingMessage)} onClick={() => deleteModel(model.id)}>
-                            删除
-                          </SecondaryButton>
-                        </div>
+              {providers.map((provider) => {
+                const isCollapsed = collapsedModelProviderIds.has(provider.id);
+                const modelListId = `provider-models-${provider.id}`;
+
+                return (
+                  <div key={provider.id} className="rounded-md border border-slate-200 bg-white p-4 dark:border-line dark:bg-sidebar">
+                    <button
+                      type="button"
+                      aria-controls={modelListId}
+                      aria-expanded={!isCollapsed}
+                      title={isCollapsed ? "展开模型列表" : "收起模型列表"}
+                      className={`flex w-full items-center justify-between gap-3 rounded-md text-left transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 dark:hover:bg-card ${isCollapsed ? "" : "mb-3"}`}
+                      onClick={() => toggleModelProvider(provider.id)}
+                    >
+                      <div className="min-w-0 px-2 py-1.5">
+                        <h3 className="break-all font-semibold dark:text-ink">{provider.name}</h3>
+                        <p className="text-xs text-slate-400 dark:text-muted/70">{provider.models.length} 个模型</p>
                       </div>
-                    ))}
+                      <div className="flex shrink-0 items-center gap-2 px-2 py-1.5">
+                        <StatusBadge enabled={provider.enabled} />
+                        <ChevronDown className={`h-4 w-4 text-slate-400 transition-transform ${isCollapsed ? "-rotate-90" : ""}`} />
+                      </div>
+                    </button>
+                    {!isCollapsed ? (
+                      <div id={modelListId} className="space-y-2">
+                        {provider.models.length === 0 ? <p className="rounded-md bg-slate-50 p-3 text-sm text-slate-500 dark:bg-card dark:text-muted">该服务商暂无模型。</p> : null}
+                        {provider.models.map((model) => (
+                          <div key={model.id} className="flex flex-col justify-between gap-3 rounded-md bg-slate-50 p-3 dark:bg-card md:flex-row md:items-center">
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <h4 className="break-all text-sm font-semibold dark:text-ink">{model.name}</h4>
+                                <TypeBadge type={model.type} />
+                                <StatusBadge enabled={model.enabled} />
+                              </div>
+                              <p className="mt-1 text-xs text-slate-500 dark:text-muted">能力：{model.capabilities}</p>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              <SecondaryButton className="px-3 py-1.5" disabled={Boolean(loadingMessage)} onClick={() => toggleModel(model)}>
+                                {model.enabled ? "停用" : "启用"}
+                              </SecondaryButton>
+                              <SecondaryButton className="px-3 py-1.5 text-red-600 dark:text-red-400" disabled={Boolean(loadingMessage)} onClick={() => deleteModel(model.id)}>
+                                删除
+                              </SecondaryButton>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </Card>
         </section>
