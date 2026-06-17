@@ -85,6 +85,20 @@ const nextConfig = {
   async headers() {
     const headers = [
       {
+        source: "/sw.js",
+        headers: [
+          {
+            key: "Cache-Control",
+            value: "no-cache"
+          },
+          {
+            key: "Service-Worker-Allowed",
+            value: "/"
+          },
+          ...securityHeaders
+        ]
+      },
+      {
         source: "/chat",
         headers: [...noStoreHeaders, ...securityHeaders]
       },

@@ -265,6 +265,10 @@ export async function POST(request: Request) {
 
           return message;
         });
+        const persistedAssistantMessage = await prisma.message.findUnique({
+          where: { id: assistantMessage.id }
+        });
+        const finalAssistantMessage = persistedAssistantMessage || assistantMessage;
 
         send("done", {
           conversation: {
@@ -287,13 +291,13 @@ export async function POST(request: Request) {
               createdAt: userMessage.createdAt.toISOString()
             },
             {
-              id: assistantMessage.id,
-              role: assistantMessage.role,
-              content: assistantMessage.content,
-              modelName: assistantMessage.modelName,
-              imageUrl: assistantMessage.imageUrl,
-              imageBase64: assistantMessage.imageBase64,
-              createdAt: assistantMessage.createdAt.toISOString()
+              id: finalAssistantMessage.id,
+              role: finalAssistantMessage.role,
+              content: finalAssistantMessage.content,
+              modelName: finalAssistantMessage.modelName,
+              imageUrl: finalAssistantMessage.imageUrl,
+              imageBase64: finalAssistantMessage.imageBase64,
+              createdAt: finalAssistantMessage.createdAt.toISOString()
             }
           ]
         });

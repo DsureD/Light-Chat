@@ -26,6 +26,16 @@ type Agent = {
   prompt: string;
 };
 
+type ImagePreviewPayload = {
+  src: string;
+  downloadSrc: string;
+  alt: string;
+};
+
+type ImagePreviewState = ImagePreviewPayload & {
+  isOpen: boolean;
+};
+
 type StreamEvent = {
   eventName: string;
   data: Record<string, unknown>;
@@ -108,6 +118,28 @@ function groupedModels(models: PublicModel[]) {
   return Array.from(groups.values());
 }
 
+function isImageGenerationModel(model: PublicModel | null) {
+  if (!model) {
+    return false;
+  }
+
+  const capabilities = model.capabilities.split(",").map((capability) => capability.trim());
+  return model.type === "image" || capabilities.includes("image");
+}
+
+function normalizeImageUrl(url?: string | null) {
+  if (!url) {
+    return "";
+  }
+
+  const normalized = url.replace(/\\/g, "/");
+  if (normalized.startsWith("http://") || normalized.startsWith("https://") || normalized.startsWith("/") || normalized.startsWith("data:")) {
+    return normalized;
+  }
+
+  return `/${normalized}`;
+}
+
 function scrollElementIntoView(element: HTMLElement | null) {
   if (!element) {
     return;
@@ -127,6 +159,42 @@ function Avatar() {
   return (
     <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-accent text-accent-ink shadow-sm">
       <Sparkles className="h-[18px] w-[18px]" />
+    </div>
+  );
+}
+
+function ChatStatusMessages({ status, error, onDismissError }: { status: string; error: string; onDismissError: () => void }) {
+  if (!status && !error) {
+    return null;
+  }
+
+  return (
+    <div className="space-y-2">
+      {status ? (
+        <div className="flex items-center gap-2 rounded-xl bg-accent/10 px-3 py-2 text-sm text-accent">
+          <span className="inline-block h-1.5 w-1.5 shrink-0 animate-blink rounded-full bg-accent" />
+          <span className="min-w-0 break-words">{status}</span>
+        </div>
+      ) : null}
+      {error ? (
+        <div className="rounded-xl border border-red-500/20 bg-red-500/10 text-sm text-red-600 dark:text-red-400" role="alert">
+          <div className="flex items-center justify-between gap-3 border-b border-red-500/10 px-3 py-2">
+            <span className="font-medium">请求失败</span>
+            <button
+              type="button"
+              onClick={onDismissError}
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-red-600/70 transition hover:bg-red-500/10 hover:text-red-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/30 dark:text-red-400/80 dark:hover:text-red-300"
+              title="关闭错误提示"
+              aria-label="关闭错误提示"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="max-h-56 overflow-y-auto whitespace-pre-wrap break-words px-3 py-2 leading-6 sm:max-h-64">
+            {error}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -170,18 +238,69 @@ function CodeBlock({ children, className }: { children: string; className?: stri
   );
 }
 
+function ImagePreviewOverlay({ preview, onClose }: { preview: ImagePreviewState; onClose: () => void }) {
+  return (
+    <div
+      className={
+        preview.isOpen
+          ? "fixed inset-0 z-[1000] flex items-center justify-center bg-black/90 p-3 backdrop-blur-sm sm:p-6"
+          : "pointer-events-none fixed inset-0 z-[1000] hidden"
+      }
+      onClick={preview.isOpen ? onClose : undefined}
+      role={preview.isOpen ? "dialog" : undefined}
+      aria-modal={preview.isOpen ? "true" : undefined}
+      aria-hidden={preview.isOpen ? undefined : true}
+      aria-label="图片预览"
+    >
+      <button
+        type="button"
+        className="fixed right-3 top-3 z-[1002] flex h-11 w-11 items-center justify-center rounded-full border border-white/30 bg-black/75 text-white shadow-2xl transition hover:bg-black focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80 sm:right-5 sm:top-5"
+        onClick={(event) => {
+          event.stopPropagation();
+          onClose();
+        }}
+        title="关闭预览"
+        aria-label="关闭预览"
+      >
+        <X className="h-5 w-5" />
+      </button>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        className="max-h-[88vh] max-w-[94vw] rounded-xl object-contain shadow-2xl"
+        src={preview.src}
+        alt={preview.alt}
+        onClick={(event) => event.stopPropagation()}
+      />
+      {preview.downloadSrc ? (
+        <a
+          className="fixed bottom-4 left-1/2 z-[1002] -translate-x-1/2 rounded-xl border border-white/20 bg-white px-4 py-2 text-sm font-medium text-black shadow-2xl transition hover:bg-white/90"
+          href={preview.downloadSrc}
+          download="generated-image.png"
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(event) => event.stopPropagation()}
+        >
+          下载图片
+        </a>
+      ) : null}
+    </div>
+  );
+}
+
 // memo：流式期间每次 delta 都会更新消息数组，未变化的消息对象引用不变，
 // 配合外层稳定的回调引用可跳过历史消息的重渲染（含 Markdown 重解析）
 const MessageBubble = memo(function MessageBubble({
   message,
   onEdit,
   onRegenerate,
-  onCopy
+  onCopy,
+  onPreviewImage
 }: {
   message: LocalMessage;
   onEdit?: (messageId: string, content: string) => void;
   onRegenerate?: (messageId: string) => void;
   onCopy?: (content: string) => void;
+  onPreviewImage?: (preview: ImagePreviewPayload) => void;
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState(message.content);
@@ -208,10 +327,12 @@ const MessageBubble = memo(function MessageBubble({
     return { text: message.content, images: [] };
   }, [message.content]);
 
-  // 图片加载失败时降级到 base64
-  const imageSrc = (!imgError && message.imageUrl) || (message.imageBase64 ? `data:image/png;base64,${message.imageBase64}` : "");
-  // 下载源也要跟随降级逻辑
-  const downloadSrc = (!imgError && message.imageUrl) || (message.imageBase64 ? `data:image/png;base64,${message.imageBase64}` : "");
+  const normalizedImageUrl = normalizeImageUrl(message.imageUrl);
+  const base64ImageSrc = message.imageBase64 ? `data:image/png;base64,${message.imageBase64}` : "";
+  // 图片加载失败时降级到 base64；没有 base64 时保留可点击链接，避免静默只剩文本。
+  const imageSrc = (!imgError && normalizedImageUrl) || base64ImageSrc;
+  const downloadSrc = normalizedImageUrl || base64ImageSrc;
+  const hasImage = Boolean(normalizedImageUrl || base64ImageSrc);
   const shouldCollapseUserMessage = isUser && parsedContent.text.length > USER_MESSAGE_COLLAPSE_LIMIT;
   const isUserMessageCollapsed = shouldCollapseUserMessage && !isUserMessageExpanded;
 
@@ -219,9 +340,13 @@ const MessageBubble = memo(function MessageBubble({
     setIsUserMessageExpanded(false);
   }, [message.id, message.content]);
 
+  useEffect(() => {
+    setImgError(false);
+  }, [normalizedImageUrl, base64ImageSrc]);
+
   const handleEditSubmit = () => {
     const trimmed = editContent.trim();
-    if (trimmed && trimmed !== parsedContent.text && onEdit) {
+    if (trimmed && onEdit) {
       onEdit(message.id, trimmed);
       setIsEditing(false);
     }
@@ -316,12 +441,14 @@ const MessageBubble = memo(function MessageBubble({
               />
               <div className="mt-2 flex gap-2">
                 <button
+                  type="button"
                   onClick={handleEditSubmit}
                   className="rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-accent-ink transition hover:bg-accent/90"
                 >
                   发送
                 </button>
                 <button
+                  type="button"
                   onClick={() => setIsEditing(false)}
                   className="rounded-lg border border-line bg-card px-3 py-1.5 text-xs font-medium text-ink/70 transition hover:bg-ink/[0.04]"
                 >
@@ -345,24 +472,39 @@ const MessageBubble = memo(function MessageBubble({
             {message.modelName}
           </p>
         ) : null}
-        {imageSrc ? (
+        {hasImage ? (
           <div className="mb-3 space-y-2">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              className="max-h-[32rem] rounded-2xl border border-line object-contain"
-              src={imageSrc}
-              alt={message.content || "generated image"}
-              onError={() => setImgError(true)}
-            />
-            <a
-              className="inline-flex rounded-xl border border-line bg-card px-3 py-1.5 text-xs font-medium text-ink/80 transition hover:bg-ink/[0.04]"
-              href={downloadSrc}
-              download="generated-image.png"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              下载图片
-            </a>
+            {imageSrc ? (
+              <button
+                type="button"
+                onClick={() => onPreviewImage?.({ src: imageSrc, downloadSrc, alt: message.content || "generated image" })}
+                className="block max-w-full rounded-2xl border border-line bg-card text-left transition hover:shadow-lift focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+                title="查看大图"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  className="max-h-[32rem] max-w-full rounded-2xl object-contain"
+                  src={imageSrc}
+                  alt={message.content || "generated image"}
+                  onError={() => setImgError(true)}
+                />
+              </button>
+            ) : (
+              <div className="rounded-2xl border border-dashed border-line bg-card/70 px-4 py-3 text-sm text-muted">
+                图片已生成，但当前页面未能加载预览。
+              </div>
+            )}
+            {downloadSrc ? (
+              <a
+                className="inline-flex rounded-xl border border-line bg-card px-3 py-1.5 text-xs font-medium text-ink/80 transition hover:bg-ink/[0.04]"
+                href={downloadSrc}
+                download="generated-image.png"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                {imageSrc ? "下载图片" : "打开图片"}
+              </a>
+            ) : null}
           </div>
         ) : null}
         {message.content ? (
@@ -488,6 +630,7 @@ export function ChatClient({ username, role }: { username: string; role: string 
   const [showAgentDialog, setShowAgentDialog] = useState(false);
   const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
   const [showInputMenu, setShowInputMenu] = useState(false);
+  const [imagePreview, setImagePreview] = useState<ImagePreviewState | null>(null);
   const { confirm, confirmDialog } = useConfirm();
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
@@ -614,6 +757,35 @@ export function ChatClient({ username, role }: { username: string; role: string 
   useEffect(() => {
     scrollElementIntoView(bottomRef.current);
   }, [messages]);
+
+  useEffect(() => {
+    if (!imagePreview?.isOpen) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setImagePreview((currentPreview) => (currentPreview ? { ...currentPreview, isOpen: false } : currentPreview));
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [imagePreview?.isOpen]);
+
+  const openImagePreview = useCallback((preview: ImagePreviewPayload) => {
+    setImagePreview((currentPreview) => {
+      if (currentPreview?.src === preview.src) {
+        return { ...currentPreview, ...preview, isOpen: true };
+      }
+
+      return { ...preview, isOpen: true };
+    });
+  }, []);
+
+  const closeImagePreview = useCallback(() => {
+    setImagePreview((currentPreview) => (currentPreview ? { ...currentPreview, isOpen: false } : currentPreview));
+  }, []);
 
   async function loadConversation(conversationId: string) {
     setError("");
@@ -1029,8 +1201,9 @@ export function ChatClient({ username, role }: { username: string; role: string 
       flushDelta();
       const aborted = controller.signal.aborted;
       const errorMessage = aborted ? "已停止生成。" : chatError instanceof Error ? chatError.message : "发送失败。";
+      const assistantFallback = aborted ? errorMessage : "请求失败，错误详情已在下方显示。";
       setError(errorMessage);
-      setMessages((currentMessages) => currentMessages.map((message) => (message.id === assistantMessage.id ? { ...message, content: message.content || errorMessage, pending: false } : message)));
+      setMessages((currentMessages) => currentMessages.map((message) => (message.id === assistantMessage.id ? { ...message, content: message.content || assistantFallback, pending: false } : message)));
     } finally {
       setStatus("");
       setIsStreaming(false);
@@ -1052,12 +1225,22 @@ export function ChatClient({ username, role }: { username: string; role: string 
     const messageIndex = messagesRef.current.findIndex((msg) => msg.id === messageId);
     if (messageIndex === -1) return;
 
+    const currentModel = selectedModelRef.current;
+    if (!currentModel) {
+      setError(isAdmin ? "请先在后台添加并启用模型。" : "暂无可用模型，请联系管理员。");
+      return;
+    }
+
     // 删除该消息及之后的所有消息
     setMessages((currentMessages) => currentMessages.slice(0, messageIndex));
 
-    // 以新内容重新发送
-    await sendChatMessageRef.current?.(newContent);
-  }, []);
+    // 以新内容重新发送。图片模型必须继续走生图接口，避免误发到文本流式接口。
+    if (isImageGenerationModel(currentModel)) {
+      await sendImageMessageRef.current?.(newContent);
+    } else {
+      await sendChatMessageRef.current?.(newContent);
+    }
+  }, [isAdmin]);
 
   const handleRegenerateMessage = useCallback(async (messageId: string) => {
     const currentMessages = messagesRef.current;
@@ -1079,12 +1262,7 @@ export function ChatClient({ username, role }: { username: string; role: string 
     // 图片会话需走生图接口（文本流式接口会拒绝图片模型）；
     // 文本会话用上一条用户消息重新生成，跳过重复添加用户消息。
     // 通过 ref 读取当前模型，保持回调引用稳定，不破坏 MessageBubble 的 memo
-    const currentModel = selectedModelRef.current;
-    const isImageModel = currentModel
-      ? currentModel.type === "image" || currentModel.capabilities.split(",").includes("image")
-      : false;
-
-    if (isImageModel) {
+    if (isImageGenerationModel(selectedModelRef.current)) {
       await sendImageMessageRef.current?.(previousUserMessage.content, true);
     } else {
       await sendChatMessageRef.current?.(previousUserMessage.content, true);
@@ -1187,8 +1365,9 @@ export function ChatClient({ username, role }: { username: string; role: string 
       await loadConversations();
     } catch (imageError) {
       const errorMessage = controller.signal.aborted ? "已停止生成。" : imageError instanceof Error ? imageError.message : "图片生成失败。";
+      const assistantFallback = controller.signal.aborted ? errorMessage : "图片生成失败，错误详情已在下方显示。";
       setError(errorMessage);
-      setMessages((currentMessages) => currentMessages.map((message) => (message.id === assistantMessage.id ? { ...message, content: errorMessage, pending: false } : message)));
+      setMessages((currentMessages) => currentMessages.map((message) => (message.id === assistantMessage.id ? { ...message, content: assistantFallback, pending: false } : message)));
     } finally {
       setStatus("");
       setIsStreaming(false);
@@ -1213,9 +1392,7 @@ export function ChatClient({ username, role }: { username: string; role: string 
       return;
     }
 
-    const isImageModel = selectedModel.type === "image" || selectedModel.capabilities.split(",").includes("image");
-
-    if (isImageModel) {
+    if (isImageGenerationModel(selectedModel)) {
       await sendImageMessage(prompt);
       return;
     }
@@ -1399,7 +1576,7 @@ export function ChatClient({ username, role }: { username: string; role: string 
         </header>
 
         {messages.length === 0 ? (
-          <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-3 py-6 sm:px-4">
+          <div className="flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto px-3 py-6 sm:px-4">
             <div className="mx-auto w-full max-w-3xl -mt-16">
               {models.length === 0 ? (
                 <div className="mb-6 rounded-2xl border border-dashed border-line bg-card/60 px-4 py-3 text-sm text-muted">
@@ -1432,14 +1609,8 @@ export function ChatClient({ username, role }: { username: string; role: string 
               </div>
 
               {(status || error) && (
-                <div className="mb-4 space-y-2">
-                  {status ? (
-                    <p className="flex items-center gap-2 rounded-xl bg-accent/10 px-3 py-2 text-sm text-accent">
-                      <span className="inline-block h-1.5 w-1.5 animate-blink rounded-full bg-accent" />
-                      {status}
-                    </p>
-                  ) : null}
-                  {error ? <p className="rounded-xl bg-red-500/10 px-3 py-2 text-sm text-red-600 dark:text-red-400">{error}</p> : null}
+                <div className="mb-4">
+                  <ChatStatusMessages status={status} error={error} onDismissError={() => setError("")} />
                 </div>
               )}
 
@@ -1573,6 +1744,7 @@ export function ChatClient({ username, role }: { username: string; role: string 
                       onEdit={message.role === "user" && !isStreaming ? handleEditMessage : undefined}
                       onRegenerate={message.role === "assistant" && !isStreaming ? handleRegenerateMessage : undefined}
                       onCopy={!isStreaming ? handleCopyMessage : undefined}
+                      onPreviewImage={openImagePreview}
                     />
                   ))}
                 </div>
@@ -1583,14 +1755,8 @@ export function ChatClient({ username, role }: { username: string; role: string 
             <footer className="bg-canvas px-3 pb-4 pt-1 sm:px-4">
               <div className="mx-auto w-full max-w-3xl">
                 {(status || error) && (
-                  <div className="mb-2 space-y-2">
-                    {status ? (
-                      <p className="flex items-center gap-2 rounded-xl bg-accent/10 px-3 py-2 text-sm text-accent">
-                        <span className="inline-block h-1.5 w-1.5 animate-blink rounded-full bg-accent" />
-                        {status}
-                      </p>
-                    ) : null}
-                    {error ? <p className="rounded-xl bg-red-500/10 px-3 py-2 text-sm text-red-600 dark:text-red-400">{error}</p> : null}
+                  <div className="mb-2">
+                    <ChatStatusMessages status={status} error={error} onDismissError={() => setError("")} />
                   </div>
                 )}
 
@@ -1693,6 +1859,7 @@ export function ChatClient({ username, role }: { username: string; role: string 
           </>
         )}
       </section>
+      {imagePreview ? <ImagePreviewOverlay preview={imagePreview} onClose={closeImagePreview} /> : null}
       {confirmDialog}
       {showAgentDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/20 backdrop-blur-sm" onClick={() => setShowAgentDialog(false)}>
