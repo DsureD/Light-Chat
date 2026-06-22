@@ -47,6 +47,11 @@ type ModelGroup = {
   models: PublicModel[];
 };
 
+type SendMessageOptions = {
+  skipAddingUserMessage?: boolean;
+  regenerateMessageId?: string;
+};
+
 const USER_MESSAGE_COLLAPSE_LIMIT = 300;
 
 async function readError(response: Response) {
@@ -132,8 +137,22 @@ function normalizeImageUrl(url?: string | null) {
     return "";
   }
 
-  const normalized = url.replace(/\\/g, "/");
-  if (normalized.startsWith("http://") || normalized.startsWith("https://") || normalized.startsWith("/") || normalized.startsWith("data:")) {
+  const normalized = url.trim().replace(/\\/g, "/");
+  if (normalized.startsWith("http://") || normalized.startsWith("https://") || normalized.startsWith("data:")) {
+    return normalized;
+  }
+
+  const uploadMatch = normalized.match(/(?:^|\/)(?:public\/)?(?:uploads|uplaods)\/([^/?#]+)([?#].*)?$/i);
+
+  if (uploadMatch) {
+    return `/uploads/${uploadMatch[1]}${uploadMatch[2] || ""}`;
+  }
+
+  if (normalized.startsWith("/uplaods/")) {
+    return normalized.replace(/^\/uplaods\//, "/uploads/");
+  }
+
+  if (normalized.startsWith("/")) {
     return normalized;
   }
 
@@ -287,6 +306,54 @@ function ImagePreviewOverlay({ preview, onClose }: { preview: ImagePreviewState;
   );
 }
 
+function MessageImageThumb({
+  src,
+  alt,
+  onPreviewImage
+}: {
+  src: string;
+  alt: string;
+  onPreviewImage?: (preview: ImagePreviewPayload) => void;
+}) {
+  const [failed, setFailed] = useState(false);
+  const normalizedSrc = useMemo(() => normalizeImageUrl(src), [src]);
+
+  useEffect(() => {
+    setFailed(false);
+  }, [normalizedSrc]);
+
+  if (!normalizedSrc || failed) {
+    return (
+      <a
+        className="inline-flex min-h-20 w-32 items-center justify-center gap-2 rounded-lg border border-dashed border-line bg-card/70 px-3 py-2 text-xs font-medium text-muted transition hover:bg-card hover:text-ink"
+        href={normalizedSrc || undefined}
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        <ImageIcon className="h-4 w-4 shrink-0" />
+        <span>打开图片</span>
+      </a>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      className="block overflow-hidden rounded-lg border border-line/70 bg-card/60 transition hover:shadow-lift focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/35"
+      onClick={() => onPreviewImage?.({ src: normalizedSrc, downloadSrc: normalizedSrc, alt })}
+      title="查看大图"
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={normalizedSrc}
+        alt={alt}
+        className="max-h-32 max-w-48 object-contain"
+        onError={() => setFailed(true)}
+      />
+    </button>
+  );
+}
+
 // memo：流式期间每次 delta 都会更新消息数组，未变化的消息对象引用不变，
 // 配合外层稳定的回调引用可跳过历史消息的重渲染（含 Markdown 重解析）
 const MessageBubble = memo(function MessageBubble({
@@ -370,7 +437,7 @@ const MessageBubble = memo(function MessageBubble({
                 {parsedContent.images.length > 0 && (
                   <div className="mb-2 flex flex-wrap gap-2">
                     {parsedContent.images.map((img, idx) => (
-                      <img key={idx} src={img} alt={`上传图片${idx + 1}`} className="max-h-32 rounded-lg" />
+                      <MessageImageThumb key={`${img}-${idx}`} src={img} alt={`上传图片${idx + 1}`} onPreviewImage={onPreviewImage} />
                     ))}
                   </div>
                 )}
@@ -635,13 +702,14 @@ export function ChatClient({ username, role }: { username: string; role: string 
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
 
   // 始终指向最新的 messages / sendChatMessage，让编辑、重新生成等回调保持稳定引用，
   // 配合 MessageBubble 的 memo 避免流式期间全列表重渲染
   const messagesRef = useRef<LocalMessage[]>([]);
   messagesRef.current = messages;
-  const sendChatMessageRef = useRef<((prompt: string, skipAddingUserMessage?: boolean) => Promise<void>) | null>(null);
-  const sendImageMessageRef = useRef<((prompt: string, skipAddingUserMessage?: boolean) => Promise<void>) | null>(null);
+  const sendChatMessageRef = useRef<((prompt: string, options?: SendMessageOptions) => Promise<void>) | null>(null);
+  const sendImageMessageRef = useRef<((prompt: string, options?: SendMessageOptions) => Promise<void>) | null>(null);
   // 重新生成需判断当前模型类型，用 ref 读取最新值，避免把 models/selectedModelId
   // 加进回调依赖而破坏 MessageBubble 的稳定引用约定
   const selectedModelRef = useRef<PublicModel | null>(null);
@@ -772,6 +840,24 @@ export function ChatClient({ username, role }: { username: string; role: string 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [imagePreview?.isOpen]);
+
+  const resizeInputTextarea = useCallback((element?: HTMLTextAreaElement | null) => {
+    const textarea = element ?? inputRef.current;
+
+    if (!textarea) {
+      return;
+    }
+
+    const maxHeight = 176;
+    textarea.style.height = "0px";
+    const nextHeight = Math.min(textarea.scrollHeight, maxHeight);
+    textarea.style.height = `${Math.max(nextHeight, 44)}px`;
+    textarea.style.overflowY = textarea.scrollHeight > maxHeight ? "auto" : "hidden";
+  }, []);
+
+  useEffect(() => {
+    resizeInputTextarea();
+  }, [input, messages.length, resizeInputTextarea]);
 
   const openImagePreview = useCallback((preview: ImagePreviewPayload) => {
     setImagePreview((currentPreview) => {
@@ -1051,7 +1137,8 @@ export function ChatClient({ username, role }: { username: string; role: string 
     }
   }
 
-  async function sendChatMessage(prompt: string, skipAddingUserMessage = false) {
+  async function sendChatMessage(prompt: string, options: SendMessageOptions = {}) {
+    const { skipAddingUserMessage = false, regenerateMessageId } = options;
     let messageContent: string | { type: string; text?: string; image_url?: { url: string } }[] = prompt;
     let systemPrompt = "";
 
@@ -1154,7 +1241,8 @@ export function ChatClient({ username, role }: { username: string; role: string 
           conversationId: activeConversationId,
           modelId: selectedModelId,
           content: messageContent,
-          systemPrompt: systemPrompt || undefined
+          systemPrompt: systemPrompt || undefined,
+          regenerateMessageId
         }),
         signal: controller.signal
       });
@@ -1263,9 +1351,15 @@ export function ChatClient({ username, role }: { username: string; role: string 
     // 文本会话用上一条用户消息重新生成，跳过重复添加用户消息。
     // 通过 ref 读取当前模型，保持回调引用稳定，不破坏 MessageBubble 的 memo
     if (isImageGenerationModel(selectedModelRef.current)) {
-      await sendImageMessageRef.current?.(previousUserMessage.content, true);
+      await sendImageMessageRef.current?.(previousUserMessage.content, {
+        skipAddingUserMessage: true,
+        regenerateMessageId: messageId
+      });
     } else {
-      await sendChatMessageRef.current?.(previousUserMessage.content, true);
+      await sendChatMessageRef.current?.(previousUserMessage.content, {
+        skipAddingUserMessage: true,
+        regenerateMessageId: messageId
+      });
     }
   }, []);
 
@@ -1275,7 +1369,8 @@ export function ChatClient({ username, role }: { username: string; role: string 
     });
   }, []);
 
-  async function sendImageMessage(prompt: string, skipAddingUserMessage = false) {
+  async function sendImageMessage(prompt: string, options: SendMessageOptions = {}) {
+    const { skipAddingUserMessage = false, regenerateMessageId } = options;
     const outgoingModelName = selectedModel?.name || null;
     const userMessage = localMessage("user", prompt, outgoingModelName);
     const assistantMessage = localMessage("assistant", "正在生成图片...", outgoingModelName);
@@ -1302,7 +1397,8 @@ export function ChatClient({ username, role }: { username: string; role: string 
         body: JSON.stringify({
           conversationId: activeConversationId,
           modelId: selectedModelId,
-          prompt
+          prompt,
+          regenerateMessageId
         }),
         signal: controller.signal
       });
@@ -1619,7 +1715,7 @@ export function ChatClient({ username, role }: { username: string; role: string 
                   {attachments.map((att) => (
                     <div key={att.id} className="relative flex items-center gap-2 rounded-lg border border-line bg-card px-3 py-2 text-sm">
                       {att.type === "image" && att.preview ? (
-                        <img src={att.preview} alt={att.name} className="h-12 w-12 rounded object-cover" />
+                        <img src={normalizeImageUrl(att.preview)} alt={att.name} className="h-12 w-12 rounded object-cover" />
                       ) : att.type === "image" ? (
                         <ImageIcon className="h-4 w-4 text-muted" />
                       ) : (
@@ -1635,7 +1731,7 @@ export function ChatClient({ username, role }: { username: string; role: string 
               )}
 
               <form
-                className="flex items-center gap-2 rounded-3xl border border-line bg-card p-2 pl-4 shadow-soft transition-all focus-within:border-accent/50 focus-within:shadow-lift"
+                className="flex items-end gap-2 rounded-3xl border border-line bg-card p-2 pl-4 shadow-soft transition-all focus-within:border-accent/50 focus-within:shadow-lift"
                 onSubmit={submitMessage}
               >
                 <div className="relative">
@@ -1672,12 +1768,16 @@ export function ChatClient({ username, role }: { username: string; role: string 
                   )}
                 </div>
                 <textarea
+                  ref={inputRef}
                   className="max-h-44 min-h-[44px] flex-1 resize-none border-0 bg-transparent py-2.5 text-[15px] leading-7 text-ink outline-none placeholder:text-muted/70 focus:ring-0"
                   disabled={models.length === 0}
                   placeholder={selectedModel?.type === "image" ? "输入图片提示词..." : "输入消息，Enter 发送，Shift + Enter 换行..."}
                   rows={1}
                   value={input}
-                  onChange={(event) => setInput(event.target.value)}
+                  onChange={(event) => {
+                    setInput(event.target.value);
+                    resizeInputTextarea(event.currentTarget);
+                  }}
                   onPaste={handlePaste}
                   onKeyDown={(event) => {
                     if (event.key === "Enter" && !event.shiftKey) {
@@ -1765,7 +1865,7 @@ export function ChatClient({ username, role }: { username: string; role: string 
                     {attachments.map((att) => (
                       <div key={att.id} className="relative flex items-center gap-2 rounded-lg border border-line bg-card px-3 py-2 text-sm">
                         {att.type === "image" && att.preview ? (
-                          <img src={att.preview} alt={att.name} className="h-12 w-12 rounded object-cover" />
+                          <img src={normalizeImageUrl(att.preview)} alt={att.name} className="h-12 w-12 rounded object-cover" />
                         ) : att.type === "image" ? (
                           <ImageIcon className="h-4 w-4 text-muted" />
                         ) : (
@@ -1781,7 +1881,7 @@ export function ChatClient({ username, role }: { username: string; role: string 
                 )}
 
                 <form
-                  className="flex items-center gap-2 rounded-3xl border border-line bg-card p-2 pl-4 shadow-soft transition-all focus-within:border-accent/50 focus-within:shadow-lift"
+                  className="flex items-end gap-2 rounded-3xl border border-line bg-card p-2 pl-4 shadow-soft transition-all focus-within:border-accent/50 focus-within:shadow-lift"
                   onSubmit={submitMessage}
                 >
                   <div className="relative">
@@ -1818,12 +1918,16 @@ export function ChatClient({ username, role }: { username: string; role: string 
                     )}
                   </div>
                   <textarea
+                    ref={inputRef}
                     className="max-h-44 min-h-[44px] flex-1 resize-none border-0 bg-transparent py-2.5 text-[15px] leading-7 text-ink outline-none placeholder:text-muted/70 focus:ring-0"
                     disabled={models.length === 0}
                     placeholder={selectedModel?.type === "image" ? "输入图片提示词..." : "输入消息，Enter 发送，Shift + Enter 换行..."}
                     rows={1}
                     value={input}
-                    onChange={(event) => setInput(event.target.value)}
+                    onChange={(event) => {
+                      setInput(event.target.value);
+                      resizeInputTextarea(event.currentTarget);
+                    }}
                     onPaste={handlePaste}
                     onKeyDown={(event) => {
                       if (event.key === "Enter" && !event.shiftKey) {

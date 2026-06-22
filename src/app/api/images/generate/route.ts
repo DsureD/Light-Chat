@@ -89,6 +89,8 @@ export async function POST(request: Request) {
   }
 
   const conversationId = typeof body.conversationId === "string" ? body.conversationId : "";
+  const regenerateMessageId = conversationId && typeof body.regenerateMessageId === "string" ? body.regenerateMessageId : "";
+  let regenerateDeleteMessageIds: string[] = [];
 
   if (conversationId) {
     // 校验会话归属，防止越权向他人会话写入消息
@@ -99,6 +101,33 @@ export async function POST(request: Request) {
 
     if (!owned) {
       return jsonError("会话不存在。", 404);
+    }
+
+    if (regenerateMessageId) {
+      const conversationMessages = await prisma.message.findMany({
+        where: {
+          conversationId,
+          role: { in: ["user", "assistant"] }
+        },
+        orderBy: { createdAt: "asc" },
+        select: { id: true, role: true }
+      });
+      const regenerateIndex = conversationMessages.findIndex((message) => message.id === regenerateMessageId);
+
+      if (regenerateIndex <= 0 || conversationMessages[regenerateIndex]?.role !== "assistant") {
+        return jsonError("无法重新生成该图片消息。", 400);
+      }
+
+      const previousUserMessage = conversationMessages
+        .slice(0, regenerateIndex)
+        .reverse()
+        .find((message) => message.role === "user");
+
+      if (!previousUserMessage) {
+        return jsonError("未找到可用于重新生成的提示词。", 400);
+      }
+
+      regenerateDeleteMessageIds = conversationMessages.slice(regenerateIndex).map((message) => message.id);
     }
   }
 
@@ -117,14 +146,16 @@ export async function POST(request: Request) {
         }
       });
 
-  const userMessage = await prisma.message.create({
-    data: {
-      conversationId: conversation.id,
-      role: "user",
-      content: prompt,
-      modelName: model.name
-    }
-  });
+  const userMessage = regenerateMessageId
+    ? null
+    : await prisma.message.create({
+        data: {
+          conversationId: conversation.id,
+          role: "user",
+          content: prompt,
+          modelName: model.name
+        }
+      });
 
   const encoder = new TextEncoder();
 
@@ -226,6 +257,15 @@ export async function POST(request: Request) {
         // 将“存储助手消息”与“扣除积分”放入同一事务，保证账目一致：
         // 要么消息入库且积分扣除，要么都不发生，避免扣分失败仍白嫖图片。
         const assistantMessage = await prisma.$transaction(async (tx) => {
+          if (regenerateDeleteMessageIds.length > 0) {
+            await tx.message.deleteMany({
+              where: {
+                conversationId: conversation.id,
+                id: { in: regenerateDeleteMessageIds }
+              }
+            });
+          }
+
           const message = await tx.message.create({
             data: {
               conversationId: conversation.id,
@@ -281,15 +321,19 @@ export async function POST(request: Request) {
             updatedAt: conversation.updatedAt.toISOString()
           },
           messages: [
-            {
-              id: userMessage.id,
-              role: userMessage.role,
-              content: userMessage.content,
-              modelName: userMessage.modelName,
-              imageUrl: userMessage.imageUrl,
-              imageBase64: userMessage.imageBase64,
-              createdAt: userMessage.createdAt.toISOString()
-            },
+            ...(userMessage
+              ? [
+                  {
+                    id: userMessage.id,
+                    role: userMessage.role,
+                    content: userMessage.content,
+                    modelName: userMessage.modelName,
+                    imageUrl: userMessage.imageUrl,
+                    imageBase64: userMessage.imageBase64,
+                    createdAt: userMessage.createdAt.toISOString()
+                  }
+                ]
+              : []),
             {
               id: finalAssistantMessage.id,
               role: finalAssistantMessage.role,

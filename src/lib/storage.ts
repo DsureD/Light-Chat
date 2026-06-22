@@ -6,7 +6,11 @@ import path from "path";
 // 注意（standalone 部署）：构建产物 standalone 不会自动包含 public 目录，
 // 部署时需将 public 一并拷贝到 server 同级，并确保 public/uploads 可写。
 const UPLOAD_DIR = path.join(process.cwd(), "public", "uploads");
+// 历史版本/手工部署中可能存在 public/uplaods 误拼目录。读取时兼容它，
+// 新写入仍统一写到 public/uploads，避免继续扩散错误路径。
+const LEGACY_UPLOAD_DIR = path.join(process.cwd(), "public", "uplaods");
 const PUBLIC_PREFIX = "/uploads";
+const LEGACY_PUBLIC_PREFIX = "/uplaods";
 
 // content-type 到扩展名的简单映射
 const EXT_BY_MIME: Record<string, string> = {
@@ -37,6 +41,46 @@ async function ensureUploadDir() {
 
 function randomFileName(ext: string) {
   return `${Date.now()}-${crypto.randomBytes(8).toString("hex")}.${ext}`;
+}
+
+function isSafeUploadFileName(fileName: string) {
+  return /^[A-Za-z0-9._-]+$/.test(fileName) && !fileName.includes("..");
+}
+
+function uploadFileNameFromPublicUrl(publicUrl: string): string | null {
+  const normalizedUrl = publicUrl.trim().replace(/\\/g, "/");
+  const prefixes = [PUBLIC_PREFIX, LEGACY_PUBLIC_PREFIX];
+  const uploadPathMatch = normalizedUrl.match(/(?:^|\/)(?:public\/)?(?:uploads|uplaods)\/([^/?#]+)$/i);
+
+  if (uploadPathMatch) {
+    const fileName = uploadPathMatch[1];
+    return isSafeUploadFileName(fileName) ? fileName : null;
+  }
+
+  for (const prefix of prefixes) {
+    if (normalizedUrl.startsWith(`${prefix}/`)) {
+      const fileName = normalizedUrl.slice(prefix.length + 1);
+      return isSafeUploadFileName(fileName) ? fileName : null;
+    }
+  }
+
+  return isSafeUploadFileName(normalizedUrl) ? normalizedUrl : null;
+}
+
+async function readUploadBuffer(fileName: string): Promise<Buffer | null> {
+  if (!isSafeUploadFileName(fileName)) {
+    return null;
+  }
+
+  for (const directory of [UPLOAD_DIR, LEGACY_UPLOAD_DIR]) {
+    try {
+      return await fs.readFile(path.join(directory, fileName));
+    } catch {
+      // 继续尝试下一个兼容目录
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -80,23 +124,40 @@ export async function saveImageFromUrl(remoteUrl: string): Promise<string> {
  * URL 不合法、含路径穿越或文件不存在时返回 null。
  */
 export async function readUploadAsDataUrl(publicUrl: string): Promise<string | null> {
-  if (!publicUrl.startsWith(`${PUBLIC_PREFIX}/`)) {
+  const fileName = uploadFileNameFromPublicUrl(publicUrl);
+
+  if (!fileName) {
     return null;
   }
 
-  const fileName = publicUrl.slice(PUBLIC_PREFIX.length + 1);
-
-  // 仅允许纯文件名，拒绝任何形式的路径穿越
-  if (!/^[A-Za-z0-9._-]+$/.test(fileName) || fileName.includes("..")) {
+  const uploadFile = await readUploadFileByName(fileName);
+  if (!uploadFile) {
     return null;
   }
 
-  try {
-    const buffer = await fs.readFile(path.join(UPLOAD_DIR, fileName));
-    const ext = path.extname(fileName).slice(1).toLowerCase();
-    const mime = MIME_BY_EXT[ext] || "image/png";
-    return `data:${mime};base64,${buffer.toString("base64")}`;
-  } catch {
+  return `data:${uploadFile.mime};base64,${uploadFile.buffer.toString("base64")}`;
+}
+
+/**
+ * 读取公开上传文件。供 /uploads/:fileName 应用路由兜底使用：
+ * 静态 public 映射异常或文件在历史误拼目录时，仍可返回图片。
+ */
+export async function readUploadFileByName(fileNameOrUrl: string): Promise<{ buffer: Buffer; mime: string; fileName: string } | null> {
+  const fileName = uploadFileNameFromPublicUrl(fileNameOrUrl);
+
+  if (!fileName) {
     return null;
   }
+
+  const buffer = await readUploadBuffer(fileName);
+  if (!buffer) {
+    return null;
+  }
+
+  const ext = path.extname(fileName).slice(1).toLowerCase();
+  return {
+    buffer,
+    mime: MIME_BY_EXT[ext] || "application/octet-stream",
+    fileName
+  };
 }

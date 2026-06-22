@@ -17,6 +17,7 @@ import { readUploadAsDataUrl } from "@/lib/storage";
 export const runtime = "nodejs";
 
 type ContentPart = { type: string; text?: string; image_url?: { url: string } };
+type ContextMessageRow = { role: string; content: string };
 
 function streamEvent(eventName: string, data: unknown) {
   return `event: ${eventName}\ndata: ${JSON.stringify(data)}\n\n`;
@@ -37,23 +38,14 @@ function extractDelta(payload: unknown) {
  * - 图片附件存的是本地 /uploads URL，发上游前内联为 data URL，
  *   且最多内联 MAX_CONTEXT_IMAGES 张（优先保留最新的），避免每轮重发几十 MB。
  */
-async function buildContextMessages(conversationId: string): Promise<ChatMessage[]> {
-  const rows = await prisma.message.findMany({
-    where: {
-      conversationId,
-      role: { in: ["system", "user", "assistant"] }
-    },
-    orderBy: { createdAt: "desc" },
-    take: getMaxContextMessages()
-  });
-
+async function buildContextMessagesFromRows(rows: ContextMessageRow[]): Promise<ChatMessage[]> {
   const maxChars = getMaxContextChars();
   let usedChars = 0;
   let remainingImages = getMaxContextImages();
   const result: ChatMessage[] = [];
 
   // rows 按新→旧排列：从最新开始装入预算，放不下的旧消息直接丢弃
-  for (const row of rows) {
+  for (const row of rows.slice(0, getMaxContextMessages())) {
     let content: string | ContentPart[] = row.content;
 
     // 尝试解析JSON格式的vision消息
@@ -116,6 +108,19 @@ async function buildContextMessages(conversationId: string): Promise<ChatMessage
   }
 
   return result.reverse();
+}
+
+async function buildContextMessages(conversationId: string): Promise<ChatMessage[]> {
+  const rows = await prisma.message.findMany({
+    where: {
+      conversationId,
+      role: { in: ["system", "user", "assistant"] }
+    },
+    orderBy: { createdAt: "desc" },
+    take: getMaxContextMessages()
+  });
+
+  return buildContextMessagesFromRows(rows);
 }
 
 export async function POST(request: Request) {
@@ -217,6 +222,9 @@ export async function POST(request: Request) {
   }
 
   const existingConversationId = typeof body.conversationId === "string" ? body.conversationId : "";
+  const regenerateMessageId = existingConversationId && typeof body.regenerateMessageId === "string" ? body.regenerateMessageId : "";
+  let regenerateDeleteMessageIds: string[] = [];
+  let regenerateContextRows: ContextMessageRow[] | null = null;
 
   if (existingConversationId) {
     // 校验会话归属，防止越权向他人会话写入消息；并行统计消息数
@@ -234,10 +242,42 @@ export async function POST(request: Request) {
       return jsonError("会话不存在。", 404);
     }
 
-    const messageLimit = userRecord.maxMessagesPerConversation ?? getMaxMessagesPerConversation();
+    if (regenerateMessageId) {
+      const conversationMessages = await prisma.message.findMany({
+        where: {
+          conversationId: existingConversationId,
+          role: { in: ["system", "user", "assistant"] }
+        },
+        orderBy: { createdAt: "asc" },
+        select: { id: true, role: true, content: true }
+      });
+      const regenerateIndex = conversationMessages.findIndex((message) => message.id === regenerateMessageId);
 
-    // 本次会新增 1 条用户消息 + 1 条助手消息，因此预留 2 条空间
-    if (messageCount + 2 > messageLimit) {
+      if (regenerateIndex <= 0 || conversationMessages[regenerateIndex]?.role !== "assistant") {
+        return jsonError("无法重新生成该消息。", 400);
+      }
+
+      const previousUserMessage = conversationMessages
+        .slice(0, regenerateIndex)
+        .reverse()
+        .find((message) => message.role === "user");
+
+      if (!previousUserMessage) {
+        return jsonError("未找到可用于重新生成的用户消息。", 400);
+      }
+
+      regenerateContextRows = conversationMessages
+        .slice(0, regenerateIndex)
+        .reverse()
+        .map((message) => ({ role: message.role, content: message.content }));
+      regenerateDeleteMessageIds = conversationMessages.slice(regenerateIndex).map((message) => message.id);
+    }
+
+    const messageLimit = userRecord.maxMessagesPerConversation ?? getMaxMessagesPerConversation();
+    const newMessageCount = messageCount - regenerateDeleteMessageIds.length + (regenerateMessageId ? 1 : 2);
+
+    // 普通发送会新增用户+助手 2 条；重新生成只新增助手 1 条，并会替换目标 AI 消息及之后内容。
+    if (newMessageCount > messageLimit) {
       return jsonError(
         `当前会话消息数已达上限（${messageLimit} 条），请新建会话后继续。`,
         403
@@ -276,16 +316,20 @@ export async function POST(request: Request) {
   // 保存用户消息时，将vision格式转为JSON字符串存储
   const contentToStore = typeof content === "string" ? content : JSON.stringify(content);
 
-  await prisma.message.create({
-    data: {
-      conversationId: conversation.id,
-      role: "user",
-      content: contentToStore,
-      modelName: model.name
-    }
-  });
+  if (!regenerateMessageId) {
+    await prisma.message.create({
+      data: {
+        conversationId: conversation.id,
+        role: "user",
+        content: contentToStore,
+        modelName: model.name
+      }
+    });
+  }
 
-  const contextMessages = await buildContextMessages(conversation.id);
+  const contextMessages = regenerateContextRows
+    ? await buildContextMessagesFromRows(regenerateContextRows)
+    : await buildContextMessages(conversation.id);
 
   // 如果有 systemPrompt，插入到消息列表最前面
   const finalMessages: ChatMessage[] = systemPrompt
@@ -378,6 +422,15 @@ export async function POST(request: Request) {
         // 将“存储助手消息”与“扣除积分”放入同一事务，保证账目一致：
         // 要么消息入库且积分扣除，要么都不发生，避免扣分失败仍白嫖回复。
         const assistantMessage = await prisma.$transaction(async (tx) => {
+          if (regenerateDeleteMessageIds.length > 0) {
+            await tx.message.deleteMany({
+              where: {
+                conversationId: conversation.id,
+                id: { in: regenerateDeleteMessageIds }
+              }
+            });
+          }
+
           const message = await tx.message.create({
             data: {
               conversationId: conversation.id,

@@ -1,5 +1,5 @@
 import { clsx } from "clsx";
-import type { ButtonHTMLAttributes, HTMLAttributes, InputHTMLAttributes, TextareaHTMLAttributes } from "react";
+import { useEffect, useRef, useState, type ButtonHTMLAttributes, type HTMLAttributes, type InputHTMLAttributes, type TextareaHTMLAttributes } from "react";
 import { X } from "@/components/icons";
 
 export function Button({ className, ...props }: ButtonHTMLAttributes<HTMLButtonElement>) {
@@ -61,7 +61,35 @@ type AdminStatusToastProps = {
   onDismiss?: () => void;
 };
 
+const ADMIN_TOAST_AUTO_DISMISS_MS = 5000;
+
 export function AdminStatusToast({ loading, notice, error, onDismiss }: AdminStatusToastProps) {
+  const [isHovered, setIsHovered] = useState(false);
+  const dismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (dismissTimerRef.current) {
+      clearTimeout(dismissTimerRef.current);
+      dismissTimerRef.current = null;
+    }
+
+    if (!onDismiss || loading || isHovered || (!notice && !error)) {
+      return;
+    }
+
+    dismissTimerRef.current = setTimeout(() => {
+      onDismiss();
+      dismissTimerRef.current = null;
+    }, ADMIN_TOAST_AUTO_DISMISS_MS);
+
+    return () => {
+      if (dismissTimerRef.current) {
+        clearTimeout(dismissTimerRef.current);
+        dismissTimerRef.current = null;
+      }
+    };
+  }, [error, isHovered, loading, notice, onDismiss]);
+
   if (!loading && !notice && !error) {
     return null;
   }
@@ -72,7 +100,11 @@ export function AdminStatusToast({ loading, notice, error, onDismiss }: AdminSta
 
   return (
     <div className="pointer-events-none fixed inset-x-0 top-4 z-[70] flex justify-center px-4">
-      <div className="pointer-events-auto grid w-full max-w-2xl gap-2">
+      <div
+        className="pointer-events-auto grid w-full max-w-2xl gap-2"
+        onMouseEnter={() => setIsHovered(true)}
+        onMouseLeave={() => setIsHovered(false)}
+      >
         {loading ? (
           <div className={`${itemClassName} border-blue-200 bg-blue-50/95 text-blue-700 dark:border-blue-900/50 dark:bg-blue-950/90 dark:text-blue-300`}>
             <p className={messageClassName}>{loading}</p>
