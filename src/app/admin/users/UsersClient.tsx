@@ -35,6 +35,8 @@ type CreditLog = {
   createdAt: string;
 };
 
+const LOGS_PAGE_SIZE = 20;
+
 async function readError(response: Response) {
   try {
     const payload = await response.json();
@@ -95,6 +97,9 @@ export function UsersClient() {
   const [showLogsDialog, setShowLogsDialog] = useState(false);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [creditLogs, setCreditLogs] = useState<CreditLog[]>([]);
+  const [logPage, setLogPage] = useState(1);
+  const [logTotalPages, setLogTotalPages] = useState(1);
+  const [logTotal, setLogTotal] = useState(0);
 
   // 分页
   const [page, setPage] = useState(1);
@@ -464,19 +469,28 @@ export function UsersClient() {
     }
   }
 
-  async function loadUserLogs(user: User) {
+  async function loadUserLogs(user: User, currentPage: number = 1) {
     setSelectedUser(user);
     setShowLogsDialog(true);
     setLoading(true);
 
     try {
-      const response = await fetch(`/api/admin/users/${user.id}/credit-logs`, { cache: "no-store" });
+      const response = await fetch(`/api/admin/users/${user.id}/credit-logs?page=${currentPage}&limit=${LOGS_PAGE_SIZE}`, { cache: "no-store" });
       if (!response.ok) {
         throw new Error(await readError(response));
       }
 
       const data = await response.json();
       setCreditLogs(data.logs || []);
+      if (data.pagination) {
+        setLogPage(data.pagination.page);
+        setLogTotalPages(data.pagination.totalPages);
+        setLogTotal(data.pagination.total);
+      } else {
+        setLogPage(1);
+        setLogTotalPages(1);
+        setLogTotal(data.logs?.length || 0);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "加载日志失败。");
     } finally {
@@ -962,6 +976,29 @@ export function UsersClient() {
                 </tbody>
               </table>
             </div>
+            {logTotalPages > 1 && (
+              <div className="mt-4 flex flex-col gap-3 border-t border-slate-200 pt-4 dark:border-line sm:flex-row sm:items-center sm:justify-between">
+                <div className="text-sm text-slate-600 dark:text-muted">
+                  共 {logTotal} 条日志，第 {logPage} / {logTotalPages} 页
+                </div>
+                <div className="flex gap-2">
+                  <SecondaryButton
+                    onClick={() => loadUserLogs(selectedUser, logPage - 1)}
+                    disabled={loading || logPage === 1}
+                    className="px-3 py-1 text-sm"
+                  >
+                    上一页
+                  </SecondaryButton>
+                  <SecondaryButton
+                    onClick={() => loadUserLogs(selectedUser, logPage + 1)}
+                    disabled={loading || logPage === logTotalPages}
+                    className="px-3 py-1 text-sm"
+                  >
+                    下一页
+                  </SecondaryButton>
+                </div>
+              </div>
+            )}
             <div className="mt-4">
               <SecondaryButton onClick={() => setShowLogsDialog(false)}>关闭</SecondaryButton>
             </div>
