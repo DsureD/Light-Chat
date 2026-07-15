@@ -66,9 +66,9 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ us
       return jsonError("用户不存在。", 404);
     }
 
-    // 不允许修改管理员账号
-    if (user.role === "ADMIN") {
-      return jsonError("不能修改管理员账号。", 403);
+    // 管理员账号允许调整积分、会话数等，但不允许修改状态，避免管理员被暂停/封禁后无法登录后台
+    if (user.role === "ADMIN" && body.status && String(body.status) !== user.status) {
+      return jsonError("不能修改管理员账号的状态。", 403);
     }
 
     const updateData: {

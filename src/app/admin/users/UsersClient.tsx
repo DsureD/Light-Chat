@@ -132,6 +132,8 @@ export function UsersClient() {
 
   const { confirm, confirmDialog } = useConfirm();
 
+  const selectedUserIsAdmin = selectedUser ? selectedUser.role === "ADMIN" || selectedUser.role === "admin" : false;
+
   const loadUsers = useCallback(async (currentPage: number = 1) => {
     try {
       const params = new URLSearchParams();
@@ -234,10 +236,10 @@ export function UsersClient() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           credits: editCredits ? parseInt(editCredits) : undefined,
-          status: editStatus || undefined,
+          status: selectedUserIsAdmin ? undefined : editStatus || undefined,
           maxConversations: editMaxConversations ? parseInt(editMaxConversations) : undefined,
           maxMessagesPerConversation: editMaxMessages ? parseInt(editMaxMessages) : undefined,
-          modelIds: editModelIds.length > 0 ? editModelIds : undefined
+          modelIds: !selectedUserIsAdmin && editModelIds.length > 0 ? editModelIds : undefined
         })
       });
 
@@ -812,14 +814,18 @@ export function UsersClient() {
               <label className="block space-y-2 text-sm font-medium dark:text-ink">
                 <span>状态</span>
                 <select
-                  className="w-full rounded-md border border-border bg-white px-3 py-2 text-sm outline-none dark:border-line dark:bg-card dark:text-ink"
+                  className="w-full rounded-md border border-border bg-white px-3 py-2 text-sm outline-none disabled:cursor-not-allowed disabled:opacity-60 dark:border-line dark:bg-card dark:text-ink"
                   value={editStatus}
                   onChange={(e) => setEditStatus(e.target.value)}
+                  disabled={selectedUserIsAdmin}
                 >
                   <option value="active">正常</option>
                   <option value="suspended">暂停</option>
                   <option value="banned">封禁</option>
                 </select>
+                {selectedUserIsAdmin ? (
+                  <p className="text-xs font-normal text-slate-500 dark:text-muted">管理员账号的状态不可修改，避免误操作导致无法登录。</p>
+                ) : null}
               </label>
               <label className="block space-y-2 text-sm font-medium dark:text-ink">
                 <span>最大会话数</span>
@@ -841,51 +847,59 @@ export function UsersClient() {
               </label>
               <label className="block space-y-2 text-sm font-medium dark:text-ink">
                 <span>模型权限</span>
-                <div className="max-h-48 overflow-y-auto rounded-md border border-border bg-white px-3 py-2 dark:border-line dark:bg-card">
-                  {models.length === 0 ? (
-                    <p className="text-sm text-slate-500 dark:text-muted">暂无可用模型</p>
-                  ) : (
-                    <div className="space-y-3">
-                      {Object.entries(
-                        models.reduce((acc, model) => {
-                          const providerId = model.provider.id;
-                          if (!acc[providerId]) {
-                            acc[providerId] = {
-                              name: model.provider.name,
-                              models: []
-                            };
-                          }
-                          acc[providerId].models.push(model);
-                          return acc;
-                        }, {} as Record<string, { name: string; models: Model[] }>)
-                      ).map(([providerId, group]) => (
-                        <div key={providerId}>
-                          <div className="mb-1.5 text-xs font-semibold text-slate-600 dark:text-muted">{group.name}</div>
-                          <div className="space-y-1">
-                            {group.models.map((model) => (
-                              <label key={model.id} className="flex items-center gap-2 cursor-pointer hover:bg-slate-50 dark:hover:bg-sidebar rounded px-2 py-1">
-                                <input
-                                  type="checkbox"
-                                  checked={editModelIds.includes(model.id)}
-                                  onChange={(e) => {
-                                    if (e.target.checked) {
-                                      setEditModelIds([...editModelIds, model.id]);
-                                    } else {
-                                      setEditModelIds(editModelIds.filter((id) => id !== model.id));
-                                    }
-                                  }}
-                                  className="h-4 w-4 rounded border-border text-accent focus:ring-2 focus:ring-accent/20 dark:border-line"
-                                />
-                                <span className="text-sm dark:text-ink">{model.name}</span>
-                              </label>
-                            ))}
-                          </div>
+                {selectedUserIsAdmin ? (
+                  <p className="rounded-md border border-dashed border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-normal text-slate-500 dark:border-line dark:bg-sidebar dark:text-muted">
+                    管理员默认拥有全部模型的使用权限，无需单独设置。
+                  </p>
+                ) : (
+                  <>
+                    <div className="max-h-48 overflow-y-auto rounded-md border border-border bg-white px-3 py-2 dark:border-line dark:bg-card">
+                      {models.length === 0 ? (
+                        <p className="text-sm text-slate-500 dark:text-muted">暂无可用模型</p>
+                      ) : (
+                        <div className="space-y-3">
+                          {Object.entries(
+                            models.reduce((acc, model) => {
+                              const providerId = model.provider.id;
+                              if (!acc[providerId]) {
+                                acc[providerId] = {
+                                  name: model.provider.name,
+                                  models: []
+                                };
+                              }
+                              acc[providerId].models.push(model);
+                              return acc;
+                            }, {} as Record<string, { name: string; models: Model[] }>)
+                          ).map(([providerId, group]) => (
+                            <div key={providerId}>
+                              <div className="mb-1.5 text-xs font-semibold text-slate-600 dark:text-muted">{group.name}</div>
+                              <div className="space-y-1">
+                                {group.models.map((model) => (
+                                  <label key={model.id} className="flex items-center gap-2 cursor-pointer hover:bg-slate-50 dark:hover:bg-sidebar rounded px-2 py-1">
+                                    <input
+                                      type="checkbox"
+                                      checked={editModelIds.includes(model.id)}
+                                      onChange={(e) => {
+                                        if (e.target.checked) {
+                                          setEditModelIds([...editModelIds, model.id]);
+                                        } else {
+                                          setEditModelIds(editModelIds.filter((id) => id !== model.id));
+                                        }
+                                      }}
+                                      className="h-4 w-4 rounded border-border text-accent focus:ring-2 focus:ring-accent/20 dark:border-line"
+                                    />
+                                    <span className="text-sm dark:text-ink">{model.name}</span>
+                                  </label>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
                         </div>
-                      ))}
+                      )}
                     </div>
-                  )}
-                </div>
-                <p className="text-xs text-slate-500 dark:text-muted">勾选用户可以使用的模型</p>
+                    <p className="text-xs text-slate-500 dark:text-muted">勾选用户可以使用的模型</p>
+                  </>
+                )}
               </label>
               <div className="flex gap-2">
                 <Button type="submit" disabled={loading} className="flex-1">

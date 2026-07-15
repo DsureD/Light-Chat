@@ -422,7 +422,7 @@ export function AdminClient({ username }: { username: string }) {
           </Card>
         </section>
 
-        <section className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
+        <section className="grid gap-6 lg:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)] lg:items-start">
           <Card className="p-6 dark:bg-card dark:border-line">
             <div className="mb-5 flex items-center justify-between gap-3">
               <div>
@@ -430,7 +430,7 @@ export function AdminClient({ username }: { username: string }) {
                 <p className="mt-1 text-sm text-slate-500 dark:text-muted">可编辑名称、Base URL、API Key，并一键同步模型。</p>
               </div>
             </div>
-            <div className="space-y-3">
+            <div className="max-h-[40rem] space-y-3 overflow-auto pr-1">
               {providers.length === 0 ? <p className="rounded-md border border-dashed border-slate-200 bg-slate-50 p-5 text-sm text-slate-500 dark:border-line dark:bg-sidebar dark:text-muted">暂无服务商，请先新增。</p> : null}
               {providers.map((provider) => (
                 <div key={provider.id} className="group rounded-md border border-slate-200 bg-white p-4 transition-colors hover:border-slate-300 hover:bg-slate-50 dark:border-line dark:bg-sidebar dark:hover:border-line dark:hover:bg-ink/5">
@@ -481,11 +481,11 @@ export function AdminClient({ username }: { username: string }) {
                       aria-controls={modelListId}
                       aria-expanded={!isCollapsed}
                       title={isCollapsed ? "展开模型列表" : "收起模型列表"}
-                      className={`flex w-full items-center justify-between gap-3 rounded-md text-left transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 dark:hover:bg-card ${isCollapsed ? "" : "mb-3"}`}
+                      className={`sticky top-0 z-10 flex w-full items-center justify-between gap-3 rounded-md bg-white text-left transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/30 dark:bg-sidebar dark:hover:bg-card ${isCollapsed ? "" : "mb-3"}`}
                       onClick={() => toggleModelProvider(provider.id)}
                     >
                       <div className="min-w-0 px-2 py-1.5">
-                        <h3 className="break-all font-semibold dark:text-ink">{provider.name}</h3>
+                        <h3 className="break-all font-semibold text-emerald-700 dark:text-emerald-300">{provider.name}</h3>
                         <p className="text-xs text-slate-400 dark:text-muted/70">{provider.models.length} 个模型</p>
                       </div>
                       <div className="flex shrink-0 items-center gap-2 px-2 py-1.5">
