@@ -167,6 +167,27 @@ function scrollElementIntoView(element: HTMLElement | null) {
   element.scrollIntoView({ block: "end" });
 }
 
+// 提取消息的纯文本内容：带附件的用户消息 content 是 vision 格式的 JSON 字符串
+function extractMessageText(content: string) {
+  try {
+    if (content.startsWith("[")) {
+      const parts = JSON.parse(content);
+
+      if (Array.isArray(parts)) {
+        return parts
+          .filter((part: { type: string }) => part.type === "text")
+          .map((part: { text?: string }) => part.text || "")
+          .join(" ")
+          .trim();
+      }
+    }
+  } catch {
+    // 解析失败时按纯文本处理
+  }
+
+  return content;
+}
+
 function formatDateShort(dateString: string) {
   const date = new Date(dateString);
   const month = date.getMonth() + 1;
@@ -697,10 +718,20 @@ export function ChatClient({ username, role }: { username: string; role: string 
   const [showAgentDialog, setShowAgentDialog] = useState(false);
   const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
   const [showInputMenu, setShowInputMenu] = useState(false);
+  // 是否停留在消息列表底部：流式输出时只有停在底部才自动跟随滚动
+  const [isAtBottom, setIsAtBottom] = useState(true);
+  // 右侧消息导航当前所处的提问序号
+  const [activeNavIndex, setActiveNavIndex] = useState(0);
   const [imagePreview, setImagePreview] = useState<ImagePreviewState | null>(null);
   const { confirm, confirmDialog } = useConfirm();
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  // isAtBottom 的 ref 镜像，供流式回调、effect 读取，避免依赖 state 造成闭包过期
+  const isAtBottomRef = useRef(true);
+  // 点击导航跳转的平滑滚动进行中：短暂屏蔽底部跟随判定，避免流式输出把视图拉回底部
+  const navJumpingRef = useRef(false);
+  const navJumpTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -823,8 +854,82 @@ export function ChatClient({ username, role }: { username: string; role: string 
   }, [loadModels, loadConversations, loadCredits, loadAgents]);
 
   useEffect(() => {
-    scrollElementIntoView(bottomRef.current);
+    // 只有用户停留在底部时才自动跟随最新消息，向上翻看时不打断阅读
+    if (isAtBottomRef.current) {
+      scrollElementIntoView(bottomRef.current);
+    }
   }, [messages]);
+
+  const userMessages = useMemo(() => messages.filter((message) => message.role === "user"), [messages]);
+
+  // 滚动时更新"是否在底部"，并计算右侧导航当前所处的提问位置
+  const handleMessagesScroll = useCallback(() => {
+    const container = scrollContainerRef.current;
+
+    if (!container) {
+      return;
+    }
+
+    if (!navJumpingRef.current) {
+      const nearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 80;
+      isAtBottomRef.current = nearBottom;
+      setIsAtBottom(nearBottom);
+    }
+
+    const currentUserMessages = messagesRef.current.filter((message) => message.role === "user");
+
+    if (currentUserMessages.length < 2) {
+      return;
+    }
+
+    const containerTop = container.getBoundingClientRect().top;
+    const threshold = containerTop + container.clientHeight * 0.35;
+    let currentIndex = 0;
+
+    for (let index = 0; index < currentUserMessages.length; index += 1) {
+      const element = document.getElementById(`chat-msg-${currentUserMessages[index].id}`);
+
+      if (!element) {
+        continue;
+      }
+
+      if (element.getBoundingClientRect().top <= threshold) {
+        currentIndex = index;
+      } else {
+        break;
+      }
+    }
+
+    setActiveNavIndex(currentIndex);
+  }, []);
+
+  const jumpToUserMessage = useCallback((messageId: string) => {
+    const target = document.getElementById(`chat-msg-${messageId}`);
+
+    if (!target) {
+      return;
+    }
+
+    isAtBottomRef.current = false;
+    setIsAtBottom(false);
+    navJumpingRef.current = true;
+
+    if (navJumpTimerRef.current) {
+      clearTimeout(navJumpTimerRef.current);
+    }
+
+    navJumpTimerRef.current = setTimeout(() => {
+      navJumpingRef.current = false;
+    }, 800);
+
+    target.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, []);
+
+  const jumpToBottom = useCallback(() => {
+    isAtBottomRef.current = true;
+    setIsAtBottom(true);
+    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, []);
 
   useEffect(() => {
     if (!imagePreview?.isOpen) {
@@ -887,6 +992,9 @@ export function ChatClient({ username, role }: { username: string; role: string 
       const payload = await response.json();
       const conversation = payload.conversation as ConversationDto;
       setActiveConversationId(conversation.id);
+      // 切换会话时总是定位到最新消息
+      isAtBottomRef.current = true;
+      setIsAtBottom(true);
       setMessages((conversation.messages || []) as LocalMessage[]);
 
       if (conversation.modelId) {
@@ -1221,6 +1329,10 @@ export function ChatClient({ username, role }: { username: string; role: string 
       }
     };
 
+    // 发送新消息时回到底部跟随输出
+    isAtBottomRef.current = true;
+    setIsAtBottom(true);
+
     if (skipAddingUserMessage) {
       setMessages((currentMessages) => [...currentMessages, assistantMessage]);
     } else {
@@ -1376,6 +1488,10 @@ export function ChatClient({ username, role }: { username: string; role: string 
     const assistantMessage = localMessage("assistant", "正在生成图片...", outgoingModelName);
     const controller = new AbortController();
     abortRef.current = controller;
+
+    // 发送新消息时回到底部跟随输出
+    isAtBottomRef.current = true;
+    setIsAtBottom(true);
 
     // 重新生成时（skipAddingUserMessage）列表里已保留上一条用户消息，
     // 只追加助手占位，避免用户消息重复
@@ -1812,44 +1928,83 @@ export function ChatClient({ username, role }: { username: string; role: string 
           </div>
         ) : (
           <>
-            <div className="min-h-0 flex-1 overflow-y-auto px-3 py-6 sm:px-4">
-              <div className="mx-auto w-full max-w-3xl">
-                {models.length === 0 ? (
-                  <div className="mb-4 rounded-2xl border border-dashed border-line bg-card/60 px-4 py-3 text-sm text-muted">
-                    {modelsError ? (
-                      <span>模型加载失败：{modelsError}。请确认手机端已登录，并且访问的是与电脑端相同的域名。</span>
-                    ) : (
-                      <span>
-                        {isAdmin ? (
-                          <>
-                            暂无可用模型。请先进入{" "}
-                            <Link className="font-medium text-accent underline underline-offset-2" href="/admin">
-                              后台
-                            </Link>{" "}
-                            添加服务商，并点击&ldquo;查询导入&rdquo;。
-                          </>
-                        ) : (
-                          "暂无可用模型。请联系管理员分配模型权限。"
-                        )}
-                      </span>
-                    )}
-                  </div>
-                ) : null}
+            <div className="relative min-h-0 flex-1">
+              <div ref={scrollContainerRef} onScroll={handleMessagesScroll} className="h-full overflow-y-auto px-3 py-6 sm:px-4">
+                <div className="mx-auto w-full max-w-3xl">
+                  {models.length === 0 ? (
+                    <div className="mb-4 rounded-2xl border border-dashed border-line bg-card/60 px-4 py-3 text-sm text-muted">
+                      {modelsError ? (
+                        <span>模型加载失败：{modelsError}。请确认手机端已登录，并且访问的是与电脑端相同的域名。</span>
+                      ) : (
+                        <span>
+                          {isAdmin ? (
+                            <>
+                              暂无可用模型。请先进入{" "}
+                              <Link className="font-medium text-accent underline underline-offset-2" href="/admin">
+                                后台
+                              </Link>{" "}
+                              添加服务商，并点击&ldquo;查询导入&rdquo;。
+                            </>
+                          ) : (
+                            "暂无可用模型。请联系管理员分配模型权限。"
+                          )}
+                        </span>
+                      )}
+                    </div>
+                  ) : null}
 
-                <div className="space-y-6">
-                  {messages.map((message) => (
-                    <MessageBubble
-                      key={message.id}
-                      message={message}
-                      onEdit={message.role === "user" && !isStreaming ? handleEditMessage : undefined}
-                      onRegenerate={message.role === "assistant" && !isStreaming ? handleRegenerateMessage : undefined}
-                      onCopy={!isStreaming ? handleCopyMessage : undefined}
-                      onPreviewImage={openImagePreview}
-                    />
-                  ))}
+                  <div className="space-y-6">
+                    {messages.map((message) => (
+                      <div key={message.id} id={`chat-msg-${message.id}`} className="scroll-mt-6">
+                        <MessageBubble
+                          message={message}
+                          onEdit={message.role === "user" && !isStreaming ? handleEditMessage : undefined}
+                          onRegenerate={message.role === "assistant" && !isStreaming ? handleRegenerateMessage : undefined}
+                          onCopy={!isStreaming ? handleCopyMessage : undefined}
+                          onPreviewImage={openImagePreview}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                  <div ref={bottomRef} className="h-4" />
                 </div>
-                <div ref={bottomRef} className="h-4" />
               </div>
+
+              {/* 右侧消息导航：每条提问一个小横条，悬停预览内容，点击跳转 */}
+              {userMessages.length >= 2 ? (
+                <nav aria-label="会话消息导航" className="absolute right-2.5 top-1/2 z-20 hidden -translate-y-1/2 flex-col items-end sm:flex">
+                  {userMessages.map((message, index) => (
+                    <button
+                      key={message.id}
+                      type="button"
+                      aria-label={`跳转到第 ${index + 1} 条提问`}
+                      className="group relative flex items-center justify-end py-1 focus-visible:outline-none"
+                      onClick={() => jumpToUserMessage(message.id)}
+                    >
+                      <span className="pointer-events-none absolute right-full mr-2 hidden max-w-[18rem] truncate whitespace-nowrap rounded-lg border border-line bg-card px-2.5 py-1.5 text-xs text-ink shadow-lift group-hover:block">
+                        {extractMessageText(message.content).slice(0, 60) || "图片 / 附件消息"}
+                      </span>
+                      <span
+                        className={`block h-1 rounded-full transition-all ${
+                          index === activeNavIndex ? "w-7 bg-accent" : "w-4 bg-ink/20 group-hover:w-6 group-hover:bg-ink/50"
+                        }`}
+                      />
+                    </button>
+                  ))}
+                </nav>
+              ) : null}
+
+              {/* 不在底部时显示回到底部按钮 */}
+              {!isAtBottom ? (
+                <button
+                  type="button"
+                  title="回到底部"
+                  onClick={jumpToBottom}
+                  className="absolute bottom-4 left-1/2 z-20 flex h-9 w-9 -translate-x-1/2 items-center justify-center rounded-full border border-line bg-card text-muted shadow-lift transition hover:text-ink active:scale-95"
+                >
+                  <ChevronDown className="h-4 w-4" />
+                </button>
+              ) : null}
             </div>
 
             <footer className="bg-canvas px-3 pb-4 pt-1 sm:px-4">
