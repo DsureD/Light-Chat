@@ -157,7 +157,9 @@ export function AdminClient({ username }: { username: string }) {
       }
 
       const payload = await response.json();
-      return `已导入/更新 ${payload.count || 0} 个模型。`;
+      const added = payload.added || 0;
+      const removed = payload.removed || 0;
+      return `同步完成：新增 ${added} 个，删除 ${removed} 个已下线模型，当前共 ${payload.count || 0} 个模型。`;
     });
   }
 
