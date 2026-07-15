@@ -222,9 +222,11 @@ export async function POST(request: Request) {
   }
 
   const existingConversationId = typeof body.conversationId === "string" ? body.conversationId : "";
-  const regenerateMessageId = existingConversationId && typeof body.regenerateMessageId === "string" ? body.regenerateMessageId : "";
+  const regenerateUserMessageId = existingConversationId && typeof body.regenerateUserMessageId === "string" ? body.regenerateUserMessageId : "";
+  const editUserMessageId = existingConversationId && typeof body.editUserMessageId === "string" ? body.editUserMessageId : "";
   let regenerateDeleteMessageIds: string[] = [];
   let regenerateContextRows: ContextMessageRow[] | null = null;
+  let editDeleteMessageIds: string[] = [];
 
   if (existingConversationId) {
     // 校验会话归属，防止越权向他人会话写入消息；并行统计消息数
@@ -242,7 +244,7 @@ export async function POST(request: Request) {
       return jsonError("会话不存在。", 404);
     }
 
-    if (regenerateMessageId) {
+    if (regenerateUserMessageId || editUserMessageId) {
       const conversationMessages = await prisma.message.findMany({
         where: {
           conversationId: existingConversationId,
@@ -251,30 +253,28 @@ export async function POST(request: Request) {
         orderBy: { createdAt: "asc" },
         select: { id: true, role: true, content: true }
       });
-      const regenerateIndex = conversationMessages.findIndex((message) => message.id === regenerateMessageId);
+      const targetUserMessageId = regenerateUserMessageId || editUserMessageId;
+      const targetUserIndex = conversationMessages.findIndex((message) => message.id === targetUserMessageId);
 
-      if (regenerateIndex <= 0 || conversationMessages[regenerateIndex]?.role !== "assistant") {
-        return jsonError("无法重新生成该消息。", 400);
+      if (targetUserIndex < 0 || conversationMessages[targetUserIndex]?.role !== "user") {
+        return jsonError(regenerateUserMessageId ? "无法重新生成该消息。" : "无法编辑该消息。", 400);
       }
 
-      const previousUserMessage = conversationMessages
-        .slice(0, regenerateIndex)
-        .reverse()
-        .find((message) => message.role === "user");
-
-      if (!previousUserMessage) {
-        return jsonError("未找到可用于重新生成的用户消息。", 400);
+      if (regenerateUserMessageId) {
+        regenerateContextRows = conversationMessages
+          .slice(0, targetUserIndex + 1)
+          .reverse()
+          .map((message) => ({ role: message.role, content: message.content }));
+        regenerateDeleteMessageIds = conversationMessages.slice(targetUserIndex + 1).map((message) => message.id);
+      } else {
+        editDeleteMessageIds = conversationMessages.slice(targetUserIndex).map((message) => message.id);
+        await prisma.message.deleteMany({ where: { conversationId: existingConversationId, id: { in: editDeleteMessageIds } } });
       }
-
-      regenerateContextRows = conversationMessages
-        .slice(0, regenerateIndex)
-        .reverse()
-        .map((message) => ({ role: message.role, content: message.content }));
-      regenerateDeleteMessageIds = conversationMessages.slice(regenerateIndex).map((message) => message.id);
     }
 
     const messageLimit = userRecord.maxMessagesPerConversation ?? getMaxMessagesPerConversation();
-    const newMessageCount = messageCount - regenerateDeleteMessageIds.length + (regenerateMessageId ? 1 : 2);
+    const removedMessageCount = regenerateDeleteMessageIds.length || editDeleteMessageIds.length;
+    const newMessageCount = messageCount - removedMessageCount + (regenerateUserMessageId ? 1 : 2);
 
     // 普通发送会新增用户+助手 2 条；重新生成只新增助手 1 条，并会替换目标 AI 消息及之后内容。
     if (newMessageCount > messageLimit) {
@@ -316,8 +316,9 @@ export async function POST(request: Request) {
   // 保存用户消息时，将vision格式转为JSON字符串存储
   const contentToStore = typeof content === "string" ? content : JSON.stringify(content);
 
-  if (!regenerateMessageId) {
-    await prisma.message.create({
+  let storedUserMessageId = regenerateUserMessageId;
+  if (!regenerateUserMessageId) {
+    const storedUserMessage = await prisma.message.create({
       data: {
         conversationId: conversation.id,
         role: "user",
@@ -325,6 +326,7 @@ export async function POST(request: Request) {
         modelName: model.name
       }
     });
+    storedUserMessageId = storedUserMessage.id;
   }
 
   const contextMessages = regenerateContextRows
@@ -355,7 +357,8 @@ export async function POST(request: Request) {
       send("meta", {
         conversationId: conversation.id,
         title: conversation.title,
-        modelName: model.name
+        modelName: model.name,
+        userMessageId: storedUserMessageId
       });
 
       let assistantContent = "";

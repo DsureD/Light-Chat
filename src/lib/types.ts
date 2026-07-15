@@ -5,6 +5,7 @@ export type PublicProvider = {
   enabled: boolean;
   createdAt: string;
   updatedAt: string;
+  customHeaders: Array<{ name: string; value: string }>;
   models?: PublicModel[];
 };
 

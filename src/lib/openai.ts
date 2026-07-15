@@ -1,4 +1,4 @@
-import { decryptText } from "./crypto";
+import { decryptText, encryptText } from "./crypto";
 import { normalizeBaseUrl, PublicRouteError } from "./http";
 
 export type ChatMessage = {
@@ -9,7 +9,56 @@ export type ChatMessage = {
 export type ProviderConfig = {
   baseUrl: string;
   apiKeyEncrypted: string;
+  customHeadersEncrypted?: string | null;
 };
+
+export type CustomHeader = { name: string; value: string };
+
+const RESERVED_HEADERS = new Set(["authorization", "content-type", "host", "content-length", "connection", "transfer-encoding"]);
+const HEADER_NAME_PATTERN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
+const MAX_CUSTOM_HEADERS = 30;
+
+export function validateCustomHeaders(headers: CustomHeader[]) {
+  if (headers.length > MAX_CUSTOM_HEADERS) {
+    throw new PublicRouteError(`自定义请求头最多允许 ${MAX_CUSTOM_HEADERS} 个。`, 400);
+  }
+
+  const seen = new Set<string>();
+  return headers.map((header) => {
+    const name = String(header.name || "").trim();
+    const value = String(header.value ?? "");
+    const normalizedName = name.toLowerCase();
+
+    if (!name || !HEADER_NAME_PATTERN.test(name) || name.length > 128) {
+      throw new PublicRouteError(`请求头名称“${name || "（空）"}”不合法。`, 400);
+    }
+    if (RESERVED_HEADERS.has(normalizedName)) {
+      throw new PublicRouteError(`请求头 ${name} 由系统管理，不能自定义。`, 400);
+    }
+    if (seen.has(normalizedName)) {
+      throw new PublicRouteError(`请求头 ${name} 重复，请保留一项。`, 400);
+    }
+    if (!value || value.length > 8192) {
+      throw new PublicRouteError(`请求头 ${name} 的值不能为空且不能超过 8192 个字符。`, 400);
+    }
+
+    assertHeaderSafe(value, `请求头 ${name}`);
+    seen.add(normalizedName);
+    return { name, value };
+  });
+}
+
+export function readCustomHeaders(provider: Pick<ProviderConfig, "customHeadersEncrypted">): CustomHeader[] {
+  if (!provider.customHeadersEncrypted) return [];
+  const parsed = JSON.parse(decryptText(provider.customHeadersEncrypted));
+  if (!Array.isArray(parsed)) throw new PublicRouteError("服务商自定义请求头配置损坏。", 500);
+  return validateCustomHeaders(parsed);
+}
+
+export function encryptCustomHeaders(headers: CustomHeader[]) {
+  const validated = validateCustomHeaders(headers);
+  return validated.length ? encryptText(JSON.stringify(validated)) : null;
+}
 
 function assertHeaderSafe(value: string, fieldName: string) {
   for (let index = 0; index < value.length; index++) {
@@ -35,10 +84,13 @@ export function normalizeProviderApiKey(apiKey: string) {
 export function getProviderHeaders(provider: ProviderConfig) {
   const apiKey = normalizeProviderApiKey(decryptText(provider.apiKeyEncrypted));
 
-  return {
+  const headers: Record<string, string> = {
     Authorization: `Bearer ${apiKey}`,
     "Content-Type": "application/json"
   };
+
+  for (const header of readCustomHeaders(provider)) headers[header.name] = header.value;
+  return headers;
 }
 
 export function providerUrl(provider: Pick<ProviderConfig, "baseUrl">, path: string) {

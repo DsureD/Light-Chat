@@ -50,6 +50,8 @@ type ModelGroup = {
 type SendMessageOptions = {
   skipAddingUserMessage?: boolean;
   regenerateMessageId?: string;
+  regenerateUserMessageId?: string;
+  editUserMessageId?: string;
 };
 
 const USER_MESSAGE_COLLAPSE_LIMIT = 300;
@@ -1221,13 +1223,18 @@ export function ChatClient({ username, role }: { username: string; role: string 
     await loadConversations();
   }
 
-  function applyStreamEvent(streamEvent: StreamEvent, assistantMessageId: string) {
+  function applyStreamEvent(streamEvent: StreamEvent, assistantMessageId: string, userMessageId: string) {
     if (streamEvent.eventName === "meta") {
       setActiveConversationId(typeof streamEvent.data.conversationId === "string" ? streamEvent.data.conversationId : null);
       const modelName = typeof streamEvent.data.modelName === "string" ? streamEvent.data.modelName : null;
+      const storedUserMessageId = typeof streamEvent.data.userMessageId === "string" ? streamEvent.data.userMessageId : null;
 
-      if (modelName) {
-        setMessages((currentMessages) => currentMessages.map((message) => (message.id === assistantMessageId ? { ...message, modelName } : message)));
+      if (modelName || storedUserMessageId) {
+        setMessages((currentMessages) => currentMessages.map((message) => {
+          if (message.id === assistantMessageId && modelName) return { ...message, modelName };
+          if (message.id === userMessageId && storedUserMessageId) return { ...message, id: storedUserMessageId, pending: false };
+          return message;
+        }));
       }
     }
 
@@ -1246,7 +1253,7 @@ export function ChatClient({ username, role }: { username: string; role: string 
   }
 
   async function sendChatMessage(prompt: string, options: SendMessageOptions = {}) {
-    const { skipAddingUserMessage = false, regenerateMessageId } = options;
+    const { skipAddingUserMessage = false, regenerateUserMessageId, editUserMessageId } = options;
     let messageContent: string | { type: string; text?: string; image_url?: { url: string } }[] = prompt;
     let systemPrompt = "";
 
@@ -1354,7 +1361,8 @@ export function ChatClient({ username, role }: { username: string; role: string 
           modelId: selectedModelId,
           content: messageContent,
           systemPrompt: systemPrompt || undefined,
-          regenerateMessageId
+          regenerateUserMessageId,
+          editUserMessageId
         }),
         signal: controller.signal
       });
@@ -1389,7 +1397,7 @@ export function ChatClient({ username, role }: { username: string; role: string 
           } else {
             // done/error 前先冲刷缓冲，保证内容顺序正确
             flushDelta();
-            applyStreamEvent(streamEvent, assistantMessage.id);
+            applyStreamEvent(streamEvent, assistantMessage.id, userMessage.id);
           }
         }
       }
@@ -1438,7 +1446,7 @@ export function ChatClient({ username, role }: { username: string; role: string 
     if (isImageGenerationModel(currentModel)) {
       await sendImageMessageRef.current?.(newContent);
     } else {
-      await sendChatMessageRef.current?.(newContent);
+      await sendChatMessageRef.current?.(newContent, { editUserMessageId: messageId });
     }
   }, [isAdmin]);
 
@@ -1470,7 +1478,7 @@ export function ChatClient({ username, role }: { username: string; role: string 
     } else {
       await sendChatMessageRef.current?.(previousUserMessage.content, {
         skipAddingUserMessage: true,
-        regenerateMessageId: messageId
+        regenerateUserMessageId: previousUserMessage.id
       });
     }
   }, []);

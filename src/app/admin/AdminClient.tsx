@@ -7,6 +7,15 @@ import { useConfirm } from "@/components/ConfirmDialog";
 import type { PublicModel, PublicProvider } from "@/lib/types";
 
 type ProviderWithModels = PublicProvider & { models: PublicModel[] };
+type CustomHeaderDraft = { id: string; name: string; value: string };
+
+function createHeaderDraft(header?: { name?: string; value?: string }): CustomHeaderDraft {
+  return {
+    id: crypto.randomUUID(),
+    name: header?.name || "",
+    value: header?.value || ""
+  };
+}
 
 async function readError(response: Response) {
   try {
@@ -45,6 +54,8 @@ export function AdminClient({ username }: { username: string }) {
   const [baseUrl, setBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [showApiKey, setShowApiKey] = useState(false);
+  const [showAdvancedHeaders, setShowAdvancedHeaders] = useState(false);
+  const [customHeaders, setCustomHeaders] = useState<CustomHeaderDraft[]>([]);
   const [manualProviderId, setManualProviderId] = useState("");
   const [manualModelName, setManualModelName] = useState("");
   const [manualModelType, setManualModelType] = useState("chat");
@@ -85,6 +96,8 @@ export function AdminClient({ username }: { username: string }) {
     setBaseUrl("");
     setApiKey("");
     setShowApiKey(false);
+    setShowAdvancedHeaders(false);
+    setCustomHeaders([]);
   }
 
   function startEditProvider(provider: ProviderWithModels) {
@@ -94,6 +107,8 @@ export function AdminClient({ username }: { username: string }) {
     setBaseUrl(provider.baseUrl);
     setApiKey("");
     setShowApiKey(false);
+    setShowAdvancedHeaders(Boolean(provider.customHeaders.length));
+    setCustomHeaders(provider.customHeaders.map((header) => createHeaderDraft(header)));
     setNotice("");
     setError("");
     window.scrollTo({ top: 0 });
@@ -134,7 +149,8 @@ export function AdminClient({ username }: { username: string }) {
         body: JSON.stringify({
           name: providerName,
           baseUrl,
-          ...(apiKey.trim() ? { apiKey } : {})
+          ...(apiKey.trim() ? { apiKey } : {}),
+          customHeaders
         })
       });
 
@@ -367,6 +383,53 @@ export function AdminClient({ username }: { username: string }) {
                   </button>
                 </div>
               </label>
+              <div className="overflow-hidden rounded-md border border-slate-200 dark:border-line">
+                <button
+                  type="button"
+                  className="flex w-full items-center justify-between gap-3 bg-slate-50 px-4 py-3 text-left transition hover:bg-slate-100 dark:bg-sidebar dark:hover:bg-ink/5"
+                  onClick={() => setShowAdvancedHeaders((open) => !open)}
+                  aria-expanded={showAdvancedHeaders}
+                >
+                  <span>
+                    <span className="block text-sm font-medium dark:text-ink">高级配置 · 自定义请求头</span>
+                    <span className="mt-0.5 block text-xs text-slate-500 dark:text-muted">{customHeaders.length ? `已配置 ${customHeaders.length} 项` : "可选，适用于需要特定客户端标识的服务商"}</span>
+                  </span>
+                  <ChevronDown className={`h-4 w-4 shrink-0 text-slate-500 transition-transform ${showAdvancedHeaders ? "rotate-180" : ""}`} />
+                </button>
+                {showAdvancedHeaders ? (
+                  <div className="space-y-3 border-t border-slate-200 p-4 dark:border-line">
+                    <p className="text-xs leading-5 text-slate-500 dark:text-muted">请求头由本站服务器发送，并非浏览器请求头。支持 User-Agent、Referer、Origin 和 X-* 等字段。</p>
+                    {customHeaders.map((header, index) => (
+                      <div className="grid gap-2 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)_auto]" key={header.id}>
+                        <Input
+                          aria-label={`请求头 ${index + 1} 名称`}
+                          placeholder="User-Agent"
+                          value={header.name}
+                          onChange={(event) => setCustomHeaders((items) => items.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item))}
+                        />
+                        <Input
+                          aria-label={`请求头 ${index + 1} 值`}
+                          placeholder="Mozilla/5.0 ..."
+                          type="text"
+                          value={header.value}
+                          onChange={(event) => setCustomHeaders((items) => items.map((item, itemIndex) => itemIndex === index ? { ...item, value: event.target.value } : item))}
+                        />
+                        <SecondaryButton
+                          aria-label={`删除请求头 ${header.name || index + 1}`}
+                          className="text-red-600 dark:text-red-400"
+                          type="button"
+                          onClick={() => setCustomHeaders((items) => items.filter((_, itemIndex) => itemIndex !== index))}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </SecondaryButton>
+                      </div>
+                    ))}
+                    <SecondaryButton type="button" onClick={() => setCustomHeaders((items) => [...items, createHeaderDraft()])}>
+                      <Plus className="h-4 w-4" /> 添加请求头
+                    </SecondaryButton>
+                  </div>
+                ) : null}
+              </div>
               <Button className="w-full py-3" disabled={Boolean(loadingMessage)} type="submit">
                 {providerMode === "edit" ? <PencilLine className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
                 {providerMode === "edit" ? "保存修改" : "保存服务商"}
@@ -443,7 +506,7 @@ export function AdminClient({ username }: { username: string }) {
                         <StatusBadge enabled={provider.enabled} />
                       </div>
                       <p className="truncate text-sm text-slate-500 dark:text-muted">{provider.baseUrl}</p>
-                      <p className="text-xs text-slate-400 dark:text-muted/70">已导入 {provider.models.length} 个模型 · API Key 已加密保存</p>
+                      <p className="text-xs text-slate-400 dark:text-muted/70">已导入 {provider.models.length} 个模型 · API Key 已加密保存{provider.customHeaders.length ? ` · ${provider.customHeaders.length} 个自定义请求头` : ""}</p>
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <SecondaryButton disabled={Boolean(loadingMessage)} onClick={() => startEditProvider(provider)}>

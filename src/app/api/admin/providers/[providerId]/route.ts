@@ -1,7 +1,7 @@
 import { requireAdmin } from "@/lib/auth";
 import { encryptText } from "@/lib/crypto";
 import { jsonError, jsonOk, normalizeBaseUrl, routeError } from "@/lib/http";
-import { normalizeProviderApiKey } from "@/lib/openai";
+import { encryptCustomHeaders, normalizeProviderApiKey, readCustomHeaders } from "@/lib/openai";
 import { prisma } from "@/lib/prisma";
 
 type RouteContext = {
@@ -14,7 +14,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     const { providerId } = await context.params;
     const body = await request.json();
 
-    const data: Record<string, string | boolean> = {};
+    const data: Record<string, string | boolean | null> = {};
 
     if (typeof body.name === "string") {
       const name = body.name.trim();
@@ -44,6 +44,14 @@ export async function PATCH(request: Request, context: RouteContext) {
       data.enabled = body.enabled;
     }
 
+    if (Array.isArray(body.customHeaders)) {
+      const nextHeaders = body.customHeaders.map((header: { name?: unknown; value?: unknown }) => ({
+        name: String(header?.name || "").trim(),
+        value: String(header?.value || "")
+      }));
+      data.customHeadersEncrypted = encryptCustomHeaders(nextHeaders);
+    }
+
     if (Object.keys(data).length === 0) {
       return jsonError("没有可更新的字段。", 400);
     }
@@ -60,7 +68,8 @@ export async function PATCH(request: Request, context: RouteContext) {
         baseUrl: provider.baseUrl,
         enabled: provider.enabled,
         createdAt: provider.createdAt.toISOString(),
-        updatedAt: provider.updatedAt.toISOString()
+        updatedAt: provider.updatedAt.toISOString(),
+        customHeaders: readCustomHeaders(provider)
       }
     });
   } catch (error) {
