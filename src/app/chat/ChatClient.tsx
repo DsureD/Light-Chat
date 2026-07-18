@@ -190,6 +190,10 @@ function extractMessageText(content: string) {
   return content;
 }
 
+function getMessageNavPreview(content: string) {
+  return extractMessageText(content).replace(/\s+/g, " ").trim().slice(0, 10) || "图片 / 附件消息";
+}
+
 function formatDateShort(dateString: string) {
   const date = new Date(dateString);
   const month = date.getMonth() + 1;
@@ -724,6 +728,8 @@ export function ChatClient({ username, role }: { username: string; role: string 
   const [isAtBottom, setIsAtBottom] = useState(true);
   // 右侧消息导航当前所处的提问序号
   const [activeNavIndex, setActiveNavIndex] = useState(0);
+  const [isMessageNavExpanded, setIsMessageNavExpanded] = useState(false);
+  const [hoveredNavIndex, setHoveredNavIndex] = useState<number | null>(null);
   const [imagePreview, setImagePreview] = useState<ImagePreviewState | null>(null);
   const { confirm, confirmDialog } = useConfirm();
   const abortRef = useRef<AbortController | null>(null);
@@ -905,7 +911,7 @@ export function ChatClient({ username, role }: { username: string; role: string 
     setActiveNavIndex(currentIndex);
   }, []);
 
-  const jumpToUserMessage = useCallback((messageId: string) => {
+  const jumpToMessage = useCallback((messageId: string) => {
     const target = document.getElementById(`chat-msg-${messageId}`);
 
     if (!target) {
@@ -1978,23 +1984,48 @@ export function ChatClient({ username, role }: { username: string; role: string 
                 </div>
               </div>
 
-              {/* 右侧消息导航：每条提问一个小横条，悬停预览内容，点击跳转 */}
+              {/* 右侧消息导航：悬停任意导航条时，展开全部提问的前 10 个字 */}
               {userMessages.length >= 2 ? (
-                <nav aria-label="会话消息导航" className="absolute right-2.5 top-1/2 z-20 hidden -translate-y-1/2 flex-col items-end sm:flex">
+                <nav
+                  aria-label="会话消息导航"
+                  className="absolute right-2.5 top-1/2 z-20 hidden -translate-y-1/2 flex-col items-end gap-1.5 sm:flex"
+                  onMouseEnter={() => setIsMessageNavExpanded(true)}
+                  onMouseLeave={() => {
+                    setIsMessageNavExpanded(false);
+                    setHoveredNavIndex(null);
+                  }}
+                  onFocus={() => setIsMessageNavExpanded(true)}
+                  onBlur={(event) => {
+                    if (!event.currentTarget.contains(event.relatedTarget)) {
+                      setIsMessageNavExpanded(false);
+                      setHoveredNavIndex(null);
+                    }
+                  }}
+                >
                   {userMessages.map((message, index) => (
                     <button
                       key={message.id}
                       type="button"
-                      aria-label={`跳转到第 ${index + 1} 条提问`}
-                      className="group relative flex items-center justify-end py-1 focus-visible:outline-none"
-                      onClick={() => jumpToUserMessage(message.id)}
+                      aria-label={`跳转到第 ${index + 1} 条提问：${getMessageNavPreview(message.content)}`}
+                      className="group/item relative flex h-8 items-center justify-end rounded-lg px-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
+                      onClick={() => jumpToMessage(message.id)}
+                      onMouseEnter={() => setHoveredNavIndex(index)}
+                      onFocus={() => setHoveredNavIndex(index)}
                     >
-                      <span className="pointer-events-none absolute right-full mr-2 hidden max-w-[18rem] truncate whitespace-nowrap rounded-lg border border-line bg-card px-2.5 py-1.5 text-xs text-ink shadow-lift group-hover:block">
-                        {extractMessageText(message.content).slice(0, 60) || "图片 / 附件消息"}
+                      <span
+                        className={`pointer-events-none absolute right-full mr-2 max-w-[16rem] truncate whitespace-nowrap rounded-md px-2.5 py-1.5 text-xs leading-5 backdrop-blur-sm transition-all duration-150 ${
+                          hoveredNavIndex === index
+                            ? "-translate-x-1 bg-accent font-medium text-accent-ink shadow-lift"
+                            : "bg-card/95 text-ink shadow-sm"
+                        } ${
+                          isMessageNavExpanded ? "block" : "hidden"
+                        }`}
+                      >
+                        {getMessageNavPreview(message.content)}
                       </span>
                       <span
                         className={`block h-1 rounded-full transition-all ${
-                          index === activeNavIndex ? "w-7 bg-accent" : "w-4 bg-ink/20 group-hover:w-6 group-hover:bg-ink/50"
+                          index === activeNavIndex ? "w-7 bg-accent" : "w-4 bg-ink/20 group-hover/item:w-6 group-hover/item:bg-ink/50"
                         }`}
                       />
                     </button>
