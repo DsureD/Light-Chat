@@ -606,6 +606,16 @@ const MessageBubble = memo(function MessageBubble({
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
               components={{
+                a({ node, ...props }) {
+                  void node;
+                  return (
+                    <a
+                      {...props}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    />
+                  );
+                },
                 code(props) {
                   const { className, children } = props;
                   const content = String(children).replace(/\n$/, "");
